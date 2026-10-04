@@ -6,8 +6,14 @@ from sqlalchemy import create_engine, pool
 from app.common.config import settings
 from app.common.database import Base
 
+from app.projects.models import Project
 from app.users.models import User
 
+from app.competitors.models import Competitor
+
+from app.scans.models import Scan
+from app.prompts.models import ScanPrompt
+from app.providers.response_model import AIResponseRecord
 config = context.config
 
 if config.config_file_name is not None:

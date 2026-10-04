@@ -1,6 +1,7 @@
 from datetime import datetime
+from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -9,7 +10,11 @@ from app.common.database import Base
 class Project(Base):
     __tablename__ = "projects"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
 
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"),
