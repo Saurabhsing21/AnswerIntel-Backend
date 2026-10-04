@@ -1,6 +1,7 @@
 from datetime import datetime
+from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -11,7 +12,8 @@ class Scan(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    project_id: Mapped[int] = mapped_column(
+    project_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
         ForeignKey("projects.id"),
         nullable=False,
         index=True,

@@ -14,6 +14,11 @@ from app.competitors.models import Competitor
 from app.scans.models import Scan
 from app.prompts.models import ScanPrompt
 from app.providers.response_model import AIResponseRecord
+from app.analysis.models import (
+    Mention,
+    CompetitorObservation,
+    Citation,
+)
 config = context.config
 
 if config.config_file_name is not None:
