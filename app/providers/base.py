@@ -8,6 +8,8 @@ class ProviderContext:
     brand_name: str = ""
     competitors: list[str] = field(default_factory=list)
     brand_website: str = ""
+    # Varies simulated answers between scans; real engines ignore it.
+    variation: int = 0
 
 
 @dataclass

@@ -40,7 +40,7 @@ class SimulatedAIProvider(AIProvider):
         context: ProviderContext | None = None,
     ) -> AIResponse:
         ctx = context or ProviderContext()
-        seed = int(hashlib.sha256(f"{model}|{prompt}".encode()).hexdigest(), 16)
+        seed = int(hashlib.sha256(f"{model}|{prompt}|{ctx.variation}".encode()).hexdigest(), 16)
         rng = random.Random(seed)
 
         names = list(dict.fromkeys([*ctx.competitors]))

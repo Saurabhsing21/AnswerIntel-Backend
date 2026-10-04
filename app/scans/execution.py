@@ -70,6 +70,7 @@ class ScanExecutionService:
                 brand_name=project.brand_name,
                 competitors=[c.name for c in competitors],
                 brand_website=project.website,
+                variation=scan.id,
             )
 
             scan.status = "running"
