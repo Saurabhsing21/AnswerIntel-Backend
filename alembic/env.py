@@ -1,11 +1,12 @@
 from logging.config import fileConfig
-from app.common.test_model import TestTable
 
 from alembic import context
 from sqlalchemy import create_engine, pool
 
 from app.common.config import settings
 from app.common.database import Base
+
+from app.users.models import User
 
 config = context.config
 
