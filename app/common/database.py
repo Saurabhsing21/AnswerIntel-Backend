@@ -1,5 +1,5 @@
-from sqlalchemy import create_engine,text
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.common.config import settings
 
@@ -9,9 +9,12 @@ engine = create_engine(
 )
 
 
+SessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+    autocommit=False,
+)
+
+
 class Base(DeclarativeBase):
     pass
-
-with engine.connect() as connection:
-    result = connection.execute(text("SELECT 1"))
-    print(result.scalar())
