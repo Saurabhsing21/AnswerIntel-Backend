@@ -12,38 +12,38 @@ def save_analysis(
     ai_response_id: int,
     result: dict,
 ):
-    mention = result["mention"]
-    recommendation = result["recommendation"]
-    position = result["position"]
-    sentiment = result["sentiment"]
-
     session.add(
         Mention(
             ai_response_id=ai_response_id,
-            brand_name=mention["brand_name"],
-            mentioned=mention["mentioned"],
-            recommended=recommendation["recommended"],
-            position=position["position"],
-            sentiment=sentiment["sentiment"],
+            brand_name=result["mention"]["brand_name"],
+            mentioned=result["mention"]["mentioned"],
+            recommended=result["recommendation"]["recommended"],
+            position=result["position"]["position"],
+            sentiment=result["sentiment"]["sentiment"],
+            reason=result["recommendation"].get("reason"),
+            analysis_method=result.get("method", "heuristic"),
         )
     )
-
     for competitor in result["competitors"]:
         session.add(
             CompetitorObservation(
                 ai_response_id=ai_response_id,
                 competitor_id=competitor["competitor_id"],
                 mentioned=competitor["mentioned"],
+                recommended=competitor.get("recommended", False),
+                position=competitor.get("position"),
+                sentiment=competitor.get("sentiment"),
             )
         )
-
     for citation in result["citations"]:
         session.add(
             Citation(
                 ai_response_id=ai_response_id,
-                url=citation["url"],
+                url=citation["url"][:1000],
                 domain=citation.get("domain"),
+                source_type=citation.get("source_type"),
+                is_brand_owned=citation.get("is_brand_owned", False),
+                competitor_id=citation.get("competitor_id"),
             )
         )
-
     session.flush()

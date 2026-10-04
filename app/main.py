@@ -1,13 +1,42 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import router as api_router
+from app.common.config import settings
+from app.common.errors import register_error_handlers
+
+log = logging.getLogger(__name__)
 
 
-app = FastAPI(title="AnswerIntel API")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    from app.scans.execution import recover_interrupted_scans
 
+    try:
+        recovered = recover_interrupted_scans()
+        if recovered:
+            log.warning("Marked %s interrupted scan(s) as failed/partial", recovered)
+    except Exception:  # database may be unavailable at boot; health check will show it
+        log.exception("Could not recover interrupted scans")
+    yield
+
+
+app = FastAPI(title="AnswerIntel API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+register_error_handlers(app)
 app.include_router(api_router)
 
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "ai_enabled": settings.ai_enabled}

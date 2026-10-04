@@ -1,62 +1,93 @@
-from sqlalchemy import select
+import logging
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.common.config import settings
+from app.common.llm import LLMError
 from app.competitors.models import Competitor
 from app.projects.models import Project
 from app.prompts.generator import (
+    LLMPromptGenerator,
     PromptGenerator,
     PromptInput,
+    TemplatePromptGenerator,
     generate_prompts,
 )
-from app.prompts.models import ScanPrompt
+from app.prompts.models import Prompt, ScanPrompt
+
+log = logging.getLogger(__name__)
+
+
+def build_input(session: Session, project: Project) -> PromptInput:
+    competitors = session.scalars(select(Competitor).where(Competitor.project_id == project.id)).all()
+    return PromptInput(
+        brand_name=project.brand_name,
+        category=project.category,
+        country=project.country,
+        description=project.description,
+        competitors=[competitor.name for competitor in competitors],
+    )
 
 
 class PromptDiscoveryService:
-
     def __init__(
         self,
-        generator: PromptGenerator,
+        generator: PromptGenerator | None = None,
     ):
         self.generator = generator
 
-    def generate_for_scan(
-        self,
-        session: Session,
-        project: Project,
-        scan_id: int,
-    ) -> list[ScanPrompt]:
+    def _generate(self, data: PromptInput) -> tuple[list[dict], str]:
+        if self.generator is not None:
+            return generate_prompts(generator=self.generator, data=data), "template"
+        if settings.ai_enabled:
+            try:
+                return generate_prompts(generator=LLMPromptGenerator(), data=data), "ai"
+            except LLMError as exc:
+                log.warning("Prompt Discovery Agent failed, using templates: %s", exc)
+        return generate_prompts(generator=TemplatePromptGenerator(), data=data), "template"
 
-        competitors = session.scalars(
-            select(Competitor)
-            .where(Competitor.project_id == project.id)
-        ).all()
-
-        prompt_input = PromptInput(
-            brand_name=project.brand_name,
-            category=project.category,
-            country=project.country,
-            description=project.description,
-            competitors=[competitor.name for competitor in competitors],
-        )
-
-        prompts = generate_prompts(
-            generator=self.generator,
-            data=prompt_input,
-        )
-
-        scan_prompts = []
-
-        for prompt in prompts:
-            scan_prompt = ScanPrompt(
-                scan_id=scan_id,
-                text=prompt["text"],
-                category=prompt["category"],
-                intent=prompt["intent"],
+    def generate_for_project(self, session: Session, project: Project) -> list[Prompt]:
+        """Adds newly discovered prompts; existing ones (and user edits) are kept."""
+        candidates, source = self._generate(build_input(session, project))
+        existing = {
+            text.strip().lower()
+            for text in session.scalars(select(Prompt.text).where(Prompt.project_id == project.id))
+        }
+        active = session.scalar(
+            select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
+        ) or 0
+        created: list[Prompt] = []
+        for candidate in candidates:
+            key = candidate["text"].strip().lower()
+            if key in existing:
+                continue
+            existing.add(key)
+            prompt = Prompt(
+                project_id=project.id,
+                text=candidate["text"].strip(),
+                category=candidate["category"],
+                intent=candidate["intent"],
+                importance=candidate.get("importance"),
+                source=source,
+                # Respect the active-prompt cap; extras are kept but inactive for review.
+                is_active=active < settings.max_active_prompts,
             )
-
-            session.add(scan_prompt)
-            scan_prompts.append(scan_prompt)
-
+            active += int(prompt.is_active)
+            session.add(prompt)
+            created.append(prompt)
         session.flush()
+        return created
 
-        return scan_prompts
+    def snapshot_for_scan(self, session: Session, project: Project, scan_id: int) -> list[ScanPrompt]:
+        """Freezes the active prompts into the scan so history stays immutable."""
+        prompts = session.scalars(
+            select(Prompt).where(Prompt.project_id == project.id, Prompt.is_active).order_by(Prompt.id)
+        ).all()
+        snapshots = [
+            ScanPrompt(scan_id=scan_id, prompt_id=p.id, text=p.text, category=p.category, intent=p.intent)
+            for p in prompts
+        ]
+        session.add_all(snapshots)
+        session.flush()
+        return snapshots

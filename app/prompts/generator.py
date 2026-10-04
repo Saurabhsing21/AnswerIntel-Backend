@@ -164,29 +164,6 @@ class TemplatePromptGenerator(PromptGenerator):
             },
         ])
 
-        prompts.extend([
-            {
-                "text": f"What is {data.brand_name}?",
-                "category": "CATEGORY",
-                "intent": "DISCOVERY",
-            },
-            {
-                "text": f"Is {data.brand_name} a good {data.category}?",
-                "category": "CATEGORY",
-                "intent": "DISCOVERY",
-            },
-            {
-                "text": f"Who should use {data.brand_name}?",
-                "category": "USE_CASE",
-                "intent": "DISCOVERY",
-            },
-            {
-                "text": f"What are the pros and cons of {data.brand_name}?",
-                "category": "CATEGORY",
-                "intent": "DISCOVERY",
-            },
-        ])
-
         for competitor in data.competitors:
             prompts.extend([
                 {
@@ -263,3 +240,62 @@ def generate_prompts(
     prompts = generator.generate(data)
     prompts = [prompt for prompt in prompts if validate_prompt(prompt)]
     return deduplicate_prompts(prompts)
+
+
+# ---------------------------------------------------------------------------
+# Prompt Discovery Agent (PRD sections 13-15). Output is validated before use.
+# ---------------------------------------------------------------------------
+
+from typing import Literal  # noqa: E402
+
+from pydantic import BaseModel, Field  # noqa: E402
+
+from app.common.config import settings  # noqa: E402
+from app.common.llm import complete_json  # noqa: E402
+
+DISCOVERY_SYSTEM = """You are a customer research and AI-search prompt generation agent.
+
+Given a business, category, market, and competitors, generate realistic questions a
+potential customer could ask an AI assistant like ChatGPT, Perplexity, or Gemini.
+
+Do not generate questions that merely contain the company name (no "What is X?").
+Prioritize: category discovery, commercial intent, comparison, alternatives, use cases,
+customer problems, competitor discovery, and buying decisions.
+Every prompt must read like a real buyer typed it. Vary wording and length. No duplicates.
+
+Return JSON: {"prompts": [{"text": str, "category": one of CATEGORY|COMPARISON|ALTERNATIVE|USE_CASE|PROBLEM|BUYER_INTENT|COMPETITOR,
+"intent": one of DISCOVERY|COMPARISON|REPLACEMENT|PURCHASE|PROBLEM_SOLVING, "importance": number 0-1 (commercial relevance)}]}"""
+
+
+class DiscoveredPrompt(BaseModel):
+    text: str = Field(min_length=8, max_length=300)
+    category: Literal["CATEGORY", "COMPARISON", "ALTERNATIVE", "USE_CASE", "PROBLEM", "BUYER_INTENT", "COMPETITOR"]
+    intent: Literal["DISCOVERY", "COMPARISON", "REPLACEMENT", "PURCHASE", "PROBLEM_SOLVING"]
+    importance: float = Field(default=0.5, ge=0, le=1)
+
+
+class DiscoveryOutput(BaseModel):
+    prompts: list[DiscoveredPrompt] = Field(min_length=5, max_length=80)
+
+
+class LLMPromptGenerator(PromptGenerator):
+    def __init__(self, count: int = 40):
+        self.count = count
+
+    def generate(self, data: PromptInput) -> list[dict]:
+        user = (
+            f"Business: {data.brand_name}\n"
+            f"Description: {data.description or 'n/a'}\n"
+            f"Category: {data.category}\n"
+            f"Market: {data.country}\n"
+            f"Competitors: {', '.join(data.competitors) or 'none given'}\n\n"
+            f"Generate {self.count} prompts covering every category."
+        )
+        output = complete_json(settings.prompt_model, DISCOVERY_SYSTEM, user, DiscoveryOutput)
+        brand = data.brand_name.lower()
+        return [
+            p.model_dump()
+            for p in output.prompts
+            # Enforce the "not merely the company name" rule even if the model ignores it.
+            if not (brand in p.text.lower() and p.category not in ("COMPARISON", "ALTERNATIVE"))
+        ]

@@ -19,6 +19,9 @@ from app.analysis.models import (
     CompetitorObservation,
     Citation,
 )
+from app.metrics.models import MetricSnapshot, CompetitorMetric
+from app.opportunities.models import Opportunity
+from app.prompts.models import Prompt
 config = context.config
 
 if config.config_file_name is not None:

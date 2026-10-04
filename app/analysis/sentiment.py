@@ -1,46 +1,12 @@
 from app.analysis.base import ResponseAnalyzer
+from app.analysis.heuristic import NEGATIVE_WORDS, POSITIVE_WORDS, analyze_name
 
-
-POSITIVE_WORDS = (
-    "excellent",
-    "great",
-    "good",
-    "best",
-    "amazing",
-    "outstanding",
-)
-
-NEGATIVE_WORDS = (
-    "bad",
-    "poor",
-    "worst",
-    "terrible",
-    "awful",
-    "disappointing",
-)
+__all__ = ["SentimentAnalyzer", "POSITIVE_WORDS", "NEGATIVE_WORDS"]
 
 
 class SentimentAnalyzer(ResponseAnalyzer):
-
     def analyze(self, response: str, context):
-        text = response.lower()
-        brand = context.brand_name.lower()
-
-        if brand not in text:
-            return {
-                "sentiment": None,
-            }
-
-        positive = sum(word in text for word in POSITIVE_WORDS)
-        negative = sum(word in text for word in NEGATIVE_WORDS)
-
-        if positive > negative:
-            sentiment = "positive"
-        elif negative > positive:
-            sentiment = "negative"
-        else:
-            sentiment = "neutral"
-
+        # Scored only on sentences that mention the brand.
         return {
-            "sentiment": sentiment,
+            "sentiment": analyze_name(response, context.brand_name, context.aliases)["sentiment"],
         }

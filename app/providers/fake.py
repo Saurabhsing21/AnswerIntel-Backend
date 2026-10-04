@@ -1,7 +1,8 @@
-from app.providers.base import AIProvider, AIResponse
+from app.providers.base import AIProvider, AIResponse, ProviderContext
 
 
 class FakeAIProvider(AIProvider):
+    """Minimal echo provider for unit tests."""
 
     @property
     def name(self) -> str:
@@ -11,10 +12,9 @@ class FakeAIProvider(AIProvider):
         self,
         prompt: str,
         model: str,
+        context: ProviderContext | None = None,
     ) -> AIResponse:
-
         text = f"Sample AI response for: {prompt}"
-
         return AIResponse(
             provider=self.name,
             model=model,

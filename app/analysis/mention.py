@@ -1,16 +1,12 @@
 from app.analysis.base import ResponseAnalyzer
+from app.analysis.heuristic import analyze_name
 
 
 class BrandMentionAnalyzer(ResponseAnalyzer):
-
     def analyze(self, response: str, context):
-
-        brand = context.brand_name.lower()
-        text = response.lower()
-
-        mentioned = brand in text
-
+        result = analyze_name(response, context.brand_name, context.aliases)
         return {
-            "mentioned": mentioned,
+            "mentioned": result["mentioned"],
             "brand_name": context.brand_name,
+            "mention_count": result["mention_count"],
         }

@@ -1,34 +1,12 @@
 from app.analysis.base import ResponseAnalyzer
+from app.analysis.heuristic import RECOMMEND_CUES, analyze_name
 
-
-RECOMMENDATION_PATTERNS = (
-    "great choice",
-    "excellent choice",
-    "good choice",
-    "recommend",
-    "recommended",
-    "should choose",
-    "best option",
-    "best choice",
-)
+RECOMMENDATION_PATTERNS = RECOMMEND_CUES
 
 
 class RecommendationAnalyzer(ResponseAnalyzer):
-
     def analyze(self, response: str, context):
-        text = response.lower()
-        brand = context.brand_name.lower()
-
-        if brand not in text:
-            return {
-                "recommended": False,
-            }
-
-        recommended = any(
-            pattern in text
-            for pattern in RECOMMENDATION_PATTERNS
-        )
-
+        result = analyze_name(response, context.brand_name, context.aliases)
         return {
-            "recommended": recommended,
+            "recommended": result["recommended"],
         }
