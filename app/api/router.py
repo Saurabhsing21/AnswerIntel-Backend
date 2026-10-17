@@ -11,6 +11,7 @@ from app.reports.router import public_router as shared_reports_router
 from app.reports.router import router as reports_router
 from app.prompts.router import router as prompts_router
 from app.scans.router import router as scans_router
+from app.schedules.router import router as schedules_router
 
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(limit_api)])
 
@@ -22,5 +23,6 @@ router.include_router(scans_router)
 router.include_router(analytics_router)
 router.include_router(opportunities_router)
 router.include_router(experiments_router)
+router.include_router(schedules_router)
 router.include_router(reports_router)
 router.include_router(shared_reports_router)

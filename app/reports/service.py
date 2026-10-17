@@ -9,6 +9,13 @@ from app.projects.models import Project
 from app.reports.models import PERIOD_DAYS, Report
 
 
+TITLES = {"weekly": "weekly AI visibility report", "monthly": "monthly AI visibility report", "manual": "AI visibility report"}
+
+
+def report_title(report: Report) -> str:
+    return f"{report.content['brand']}: {TITLES[report.type]}"
+
+
 def _pct(value: float | None) -> str:
     return f"{round((value or 0) * 100)}%"
 

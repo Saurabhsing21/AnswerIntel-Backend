@@ -1,6 +1,7 @@
 """Celery app (PRD 56-57). Run a worker with: celery -A app.worker.celery_app worker -l info -Q scan"""
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.common.config import settings
 
@@ -17,4 +18,9 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,  # scans are long; do not hoard jobs behind a busy worker
     broker_connection_retry_on_startup=True,
     timezone="UTC",
+    # Scheduler: run with `celery -A app.worker.celery_app beat`. It only queues work (PRD 81).
+    beat_schedule={
+        "dispatch-scheduled-scans": {"task": "schedules.dispatch", "schedule": crontab(minute=0)},
+        "requeue-stuck-scans": {"task": "schedules.requeue_stuck", "schedule": crontab(minute="*/10")},
+    },
 )

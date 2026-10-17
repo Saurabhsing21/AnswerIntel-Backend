@@ -23,6 +23,7 @@ from app.metrics.models import MetricSnapshot, CompetitorMetric
 from app.opportunities.models import Opportunity
 from app.experiments.models import Experiment, ExperimentSnapshot
 from app.reports.models import Report
+from app.schedules.models import ScanSchedule
 from app.prompts.models import Prompt
 config = context.config
 

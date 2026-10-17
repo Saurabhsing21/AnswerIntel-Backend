@@ -15,21 +15,14 @@ from app.common.errors import AppError
 from app.reports.email import send_report_email
 from app.reports.models import Report
 from app.reports.render import render_html, render_pdf
-from app.reports.service import create_report
+from app.reports.service import create_report, report_title
 from app.users.models import User
 
 router = APIRouter(prefix="/projects/{project_id}/reports", tags=["Reports"])
 public_router = APIRouter(prefix="/shared/reports", tags=["Reports"])
 
-TITLES = {"weekly": "weekly AI visibility report", "monthly": "monthly AI visibility report", "manual": "AI visibility report"}
-
-
 class ReportCreate(BaseModel):
     type: Literal["weekly", "monthly", "manual"] = "weekly"
-
-
-def _title(report: Report) -> str:
-    return f"{report.content['brand']}: {TITLES[report.type]}"
 
 
 def serialize(report: Report, with_content: bool = True) -> dict:
@@ -59,9 +52,9 @@ def _get_report(session: Session, project_id: UUID, report_id: int, user_id: int
 
 def _export(report: Report, format: str):
     if format == "html":
-        return Response(render_html(report.content, _title(report)), media_type="text/html")
+        return Response(render_html(report.content, report_title(report)), media_type="text/html")
     if format == "pdf":
-        return Response(render_pdf(report.content, _title(report)), media_type="application/pdf")
+        return Response(render_pdf(report.content, report_title(report)), media_type="application/pdf")
     return serialize(report)
 
 
@@ -123,7 +116,7 @@ def revoke_share(project_id: UUID, report_id: int, current_user: User = Depends(
 def email_report(project_id: UUID, report_id: int, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         report = _get_report(session, project_id, report_id, current_user.id)
-        send_report_email(current_user.email, _title(report), render_html(report.content, _title(report)))
+        send_report_email(current_user.email, report_title(report), render_html(report.content, report_title(report)))
         report.emailed_at = datetime.now(timezone.utc)
         session.commit()
         return {"sent": True, "to": current_user.email}
