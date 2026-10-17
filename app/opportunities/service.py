@@ -42,6 +42,13 @@ OBJECTIVES = {
     "ENTITY_GAP": "Be named on open category questions, not only when buyers search for you by name.",
     "TECHNICAL_GAP": "Make sure AI crawlers can read and quote your website.",
 }
+# The title names the top finding, so a minor gap never reads like a serious one.
+TECHNICAL_TITLES = {
+    "ROBOTS_BLOCKS_AI": "Your robots.txt blocks AI crawlers",
+    "THIN_CONTENT": "Your homepage is hard for AI to read",
+    "NO_STRUCTURED_DATA": "Your homepage has no structured data for AI",
+    "NO_LLMS_TXT": "Your site has no llms.txt for AI",
+}
 DISCOVERY_CATEGORIES = ("CATEGORY", "USE_CASE", "PROBLEM")
 BRANDED_CATEGORIES = ("COMPARISON", "COMPETITOR", "ALTERNATIVE")
 
@@ -184,7 +191,7 @@ def detect(
         findings = sorted(audit["findings"], key=lambda f: order[f["impact"]])
         found.append({
             "type": "TECHNICAL_GAP",
-            "title": "Your robots.txt blocks AI crawlers" if findings[0]["code"] == "ROBOTS_BLOCKS_AI" else "AI crawlers have trouble reading your website",
+            "title": TECHNICAL_TITLES[findings[0]["code"]],
             "description": " ".join(f["message"] for f in findings),
             "recommended_action": " ".join(f["action"] for f in findings),
             "impact": findings[0]["impact"],
