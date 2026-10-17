@@ -3,9 +3,16 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from app.common.config import settings
 from app.main import app
 
 API = "/api/v1"
+
+
+@pytest.fixture(autouse=True)
+def rate_limits_off(monkeypatch):
+    """Tests sign up and log in from one address; the limits have their own tests in test_rate_limits.py."""
+    monkeypatch.setattr(settings, "rate_limit_enabled", False)
 
 
 @pytest.fixture(autouse=True)

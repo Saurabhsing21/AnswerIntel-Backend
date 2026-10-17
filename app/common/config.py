@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     provider_retry_delays: str = "30,120,600"
     provider_max_parallel_per_engine: int = 2
     max_scans_per_day: int = 20  # per project (PRD 60-61)
+    rate_limit_enabled: bool = True
+    login_rate_limit_per_minute: int = 5  # per IP (PRD 60)
+    api_rate_limit_per_minute: int = 100  # per user (PRD 60)
     # Empty = run scans in-process (local dev). Set = Celery workers on Redis (PRD 56).
     redis_url: str = ""
 

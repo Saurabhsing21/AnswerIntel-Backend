@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.auth.router import router as auth_router
+from app.common.ratelimit import limit_api
 from app.competitors.router import router as competitors_router
 from app.experiments.router import router as experiments_router
 from app.metrics.router import router as analytics_router
@@ -11,7 +12,7 @@ from app.reports.router import router as reports_router
 from app.prompts.router import router as prompts_router
 from app.scans.router import router as scans_router
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(limit_api)])
 
 router.include_router(auth_router)
 router.include_router(projects_router)

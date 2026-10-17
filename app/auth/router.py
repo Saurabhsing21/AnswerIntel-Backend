@@ -10,6 +10,7 @@ from app.auth.password import hash_password, verify_password
 from app.auth.jwt import create_access_token
 from fastapi import Depends
 from app.auth.dependencies import get_current_user
+from app.common.ratelimit import limit_login
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -44,7 +45,7 @@ def register(request: RegisterRequest):
 
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(limit_login)])
 def login(request: LoginRequest):
     with SessionLocal() as session:
         user = session.scalar(
