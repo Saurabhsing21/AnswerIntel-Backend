@@ -98,6 +98,15 @@ def build_dashboard(session, project) -> dict:
             })
     competitor_rows.sort(key=lambda r: r["mention_rate"], reverse=True)
 
+    # Every tracked competitor per scan, so the dashboard can chart brands side by side.
+    names = {c.id: c.name for c in competitors}
+    competitor_trend: dict[int, dict] = defaultdict(dict)
+    for cm in session.scalars(select(CompetitorMetric).where(CompetitorMetric.scan_id.in_([s.id for _, s in history]))):
+        if cm.competitor_id in names:
+            competitor_trend[cm.scan_id][names[cm.competitor_id]] = {
+                k: getattr(cm, k) for k in ("mention_rate", "recommendation_rate", "share_of_voice")
+            }
+
     opportunities = session.scalars(
         select(Opportunity).where(Opportunity.scan_id == scan.id, Opportunity.status.in_(("open", "in_progress")))
     ).all()
@@ -118,6 +127,7 @@ def build_dashboard(session, project) -> dict:
         "trend": [{
             "scan_id": s.id, "date": s.completed_at or s.created_at,
             **{k: getattr(m, k) for k in ("mention_rate", "recommendation_rate", "share_of_voice")},
+            "competitors": competitor_trend.get(s.id, {}),
         } for m, s in history],
         "top_opportunities": [serialize_opportunity(o) for o in opportunities],
         "recent_answers": [{

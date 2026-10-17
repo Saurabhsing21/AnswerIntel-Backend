@@ -1,5 +1,6 @@
 """PRD sections 81-82: weekly schedule, scheduler that only queues work, stuck-scan sweeper."""
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
@@ -31,6 +32,12 @@ def enable(client, headers, project_id, day_of_week=0, hour=9):
 def created_at(project_id) -> datetime:
     with SessionLocal() as session:
         return session.scalar(select(ScanSchedule.created_at).where(ScanSchedule.project_id == project_id))
+
+
+def mine(scan_ids: list[int], project_id) -> list[int]:
+    """The dispatcher serves every project in the shared test database; keep only this project's scans."""
+    with SessionLocal() as session:
+        return [s for s in scan_ids if session.get(Scan, s).project_id == uuid.UUID(project_id)]
 
 
 def next_slot(after: datetime, day_of_week: int, hour: int) -> datetime:
@@ -69,22 +76,23 @@ def test_scheduler_only_queues_scans_once_per_slot(client):
         queued.append((scan_id, send_report))
 
     # Right after enabling, the slot has not come round yet.
-    assert dispatch_due_scans(created_at(project_id) + timedelta(minutes=1), enqueue) == []
+    assert mine(dispatch_due_scans(created_at(project_id) + timedelta(minutes=1), enqueue), project_id) == []
 
     slot = next_slot(created_at(project_id), 2, 10)
-    started = dispatch_due_scans(slot, enqueue)
-    assert len(started) == 1 and queued == [(started[0], True)]  # the scheduler queues; it does not run the scan
+    started = mine(dispatch_due_scans(slot, enqueue), project_id)
+    assert len(started) == 1 and (started[0], True) in queued  # the scheduler queues; it does not run the scan
     with SessionLocal() as session:
         assert session.get(Scan, started[0]).status == "queued"
 
-    assert dispatch_due_scans(slot + timedelta(minutes=30), enqueue) == []  # same slot: no duplicate scan
+    # Same slot again: no duplicate scan for this project.
+    assert mine(dispatch_due_scans(slot + timedelta(minutes=30), enqueue), project_id) == []
 
 
 def test_disabled_schedule_never_dispatches(client):
     headers, project_id = project_with_prompts(client, "off")
     enable(client, headers, project_id, day_of_week=2, hour=10)
     client.put(f"{API}/projects/{project_id}/schedule", json={"enabled": False}, headers=headers)
-    assert dispatch_due_scans(next_slot(created_at(project_id), 2, 10), lambda *_: None) == []
+    assert mine(dispatch_due_scans(next_slot(created_at(project_id), 2, 10), lambda *_: None), project_id) == []
 
 
 def test_a_blocked_slot_is_retried_on_the_next_run(client):
@@ -96,12 +104,12 @@ def test_a_blocked_slot_is_retried_on_the_next_run(client):
     with SessionLocal() as session:
         session.execute(update(Scan).where(Scan.project_id == project_id).values(status="running"))
         session.commit()
-    assert dispatch_due_scans(slot, lambda *_: None) == []  # blocked by the running scan, nothing lost
+    assert mine(dispatch_due_scans(slot, lambda *_: None), project_id) == []  # blocked by the running scan, nothing lost
 
     with SessionLocal() as session:
         session.execute(update(Scan).where(Scan.project_id == project_id).values(status="completed"))
         session.commit()
-    assert len(dispatch_due_scans(slot + timedelta(hours=1), lambda *_: None)) == 1  # picked up one run later
+    assert len(mine(dispatch_due_scans(slot + timedelta(hours=1), lambda *_: None), project_id)) == 1  # one run later
 
 
 def test_stuck_queued_scans_are_requeued(client):
