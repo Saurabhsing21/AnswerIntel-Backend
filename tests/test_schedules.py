@@ -34,10 +34,9 @@ def created_at(project_id) -> datetime:
         return session.scalar(select(ScanSchedule.created_at).where(ScanSchedule.project_id == project_id))
 
 
-def mine(scan_ids: list[int], project_id) -> list[int]:
-    """The dispatcher serves every project in the shared test database; keep only this project's scans."""
-    with SessionLocal() as session:
-        return [s for s in scan_ids if session.get(Scan, s).project_id == uuid.UUID(project_id)]
+def dispatch(now, enqueue, project_id) -> list[int]:
+    """Run the scheduler for this project only; the shared test database holds other projects' schedules."""
+    return dispatch_due_scans(now, enqueue, project_ids=[uuid.UUID(project_id)])
 
 
 def next_slot(after: datetime, day_of_week: int, hour: int) -> datetime:
@@ -76,23 +75,23 @@ def test_scheduler_only_queues_scans_once_per_slot(client):
         queued.append((scan_id, send_report))
 
     # Right after enabling, the slot has not come round yet.
-    assert mine(dispatch_due_scans(created_at(project_id) + timedelta(minutes=1), enqueue), project_id) == []
+    assert dispatch(created_at(project_id) + timedelta(minutes=1), enqueue, project_id) == []
 
     slot = next_slot(created_at(project_id), 2, 10)
-    started = mine(dispatch_due_scans(slot, enqueue), project_id)
+    started = dispatch(slot, enqueue, project_id)
     assert len(started) == 1 and (started[0], True) in queued  # the scheduler queues; it does not run the scan
     with SessionLocal() as session:
         assert session.get(Scan, started[0]).status == "queued"
 
     # Same slot again: no duplicate scan for this project.
-    assert mine(dispatch_due_scans(slot + timedelta(minutes=30), enqueue), project_id) == []
+    assert dispatch(slot + timedelta(minutes=30), enqueue, project_id) == []
 
 
 def test_disabled_schedule_never_dispatches(client):
     headers, project_id = project_with_prompts(client, "off")
     enable(client, headers, project_id, day_of_week=2, hour=10)
     client.put(f"{API}/projects/{project_id}/schedule", json={"enabled": False}, headers=headers)
-    assert mine(dispatch_due_scans(next_slot(created_at(project_id), 2, 10), lambda *_: None), project_id) == []
+    assert dispatch(next_slot(created_at(project_id), 2, 10), lambda *_: None, project_id) == []
 
 
 def test_a_blocked_slot_is_retried_on_the_next_run(client):
@@ -104,12 +103,12 @@ def test_a_blocked_slot_is_retried_on_the_next_run(client):
     with SessionLocal() as session:
         session.execute(update(Scan).where(Scan.project_id == project_id).values(status="running"))
         session.commit()
-    assert mine(dispatch_due_scans(slot, lambda *_: None), project_id) == []  # blocked by the running scan, nothing lost
+    assert dispatch(slot, lambda *_: None, project_id) == []  # blocked by the running scan, nothing lost
 
     with SessionLocal() as session:
         session.execute(update(Scan).where(Scan.project_id == project_id).values(status="completed"))
         session.commit()
-    assert len(mine(dispatch_due_scans(slot + timedelta(hours=1), lambda *_: None), project_id)) == 1  # one run later
+    assert len(dispatch(slot + timedelta(hours=1), lambda *_: None, project_id)) == 1  # picked up one run later
 
 
 def test_stuck_queued_scans_are_requeued(client):
