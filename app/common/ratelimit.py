@@ -69,6 +69,11 @@ def limit_login(request: Request) -> None:
         raise AppError(429, "RATE_LIMITED", "Too many login attempts. Please wait a minute and try again.")
 
 
+def limit_waitlist(request: Request) -> None:
+    if not limiter.allow(f"waitlist:{_client_ip(request)}", settings.waitlist_rate_limit_per_minute):
+        raise AppError(429, "RATE_LIMITED", "Too many requests. Please try again in a minute.")
+
+
 def limit_api(request: Request) -> None:
     who = _client_ip(request)
     scheme, _, token = request.headers.get("authorization", "").partition(" ")

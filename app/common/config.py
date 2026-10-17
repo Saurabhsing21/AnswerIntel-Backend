@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     login_rate_limit_per_minute: int = 5  # per IP (PRD 60)
     api_rate_limit_per_minute: int = 100  # per user (PRD 60)
+    waitlist_rate_limit_per_minute: int = 10  # per IP; the endpoint is public
     # Empty = run scans in-process (local dev). Set = Celery workers on Redis (PRD 56).
     redis_url: str = ""
 

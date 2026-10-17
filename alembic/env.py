@@ -24,6 +24,7 @@ from app.opportunities.models import Opportunity
 from app.experiments.models import Experiment, ExperimentSnapshot
 from app.reports.models import Report
 from app.schedules.models import ScanSchedule
+from app.waitlist.models import WaitlistSignup
 from app.prompts.models import Prompt
 config = context.config
 
