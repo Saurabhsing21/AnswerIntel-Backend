@@ -23,6 +23,29 @@ CATEGORY_LABELS = {
 }
 
 
+# Action Center grouping (PRD 11): where the founder has to do the work.
+AREAS = {
+    "CONTENT_GAP": "content",
+    "COMPETITOR_GAP": "content",
+    "COMPARISON_GAP": "content",
+    "CITATION_GAP": "third_party",
+    "POSITIONING_GAP": "positioning",
+    "ENTITY_GAP": "positioning",
+    "TECHNICAL_GAP": "technical",
+}
+OBJECTIVES = {
+    "CONTENT_GAP": "Get mentioned on the question types where you are invisible today.",
+    "COMPETITOR_GAP": "Appear in the answers where this competitor is recommended instead of you.",
+    "COMPARISON_GAP": "Win the head-to-head comparison prompts against your competitors.",
+    "CITATION_GAP": "Be cited by the sources AI already trusts for your category.",
+    "POSITIONING_GAP": "Move from being mentioned to being recommended.",
+    "ENTITY_GAP": "Be named on open category questions, not only when buyers search for you by name.",
+    "TECHNICAL_GAP": "Make sure AI crawlers can read and quote your website.",
+}
+DISCOVERY_CATEGORIES = ("CATEGORY", "USE_CASE", "PROBLEM")
+BRANDED_CATEGORIES = ("COMPARISON", "COMPETITOR", "ALTERNATIVE")
+
+
 def _impact(count: int, total: int) -> str:
     share = count / total if total else 0
     if count >= 5 or share >= 0.3:
@@ -36,7 +59,9 @@ def _confidence(evidence_count: int) -> float:
     return round(min(0.95, 0.5 + 0.06 * evidence_count), 2)
 
 
-def detect(observations: list[Observation], brand: str, competitors: dict[int, str]) -> list[dict]:
+def detect(
+    observations: list[Observation], brand: str, competitors: dict[int, str], audit: dict | None = None
+) -> list[dict]:
     found: list[dict] = []
     prompts = {o.scan_prompt_id: o.prompt_text for o in observations}
     total_prompts = len(prompts)
@@ -129,6 +154,47 @@ def detect(observations: list[Observation], brand: str, competitors: dict[int, s
             "evidence": {"prompts": lost_comparisons[:10]},
         })
 
+    # ENTITY_GAP: known by name, but not associated with the category on open questions (PRD 10, type 4).
+    discovery = [o for o in observations if o.category in DISCOVERY_CATEGORIES]
+    branded = [o for o in observations if o.category in BRANDED_CATEGORIES]
+    if len({o.scan_prompt_id for o in discovery}) >= 3 and len({o.scan_prompt_id for o in branded}) >= 2:
+        discovery_rate = round(sum(o.brand["mentioned"] for o in discovery) / len(discovery), 4)
+        branded_rate = round(sum(o.brand["mentioned"] for o in branded) / len(branded), 4)
+        if discovery_rate < 0.35 and branded_rate - discovery_rate >= 0.3:
+            missed = sorted({o.prompt_text for o in discovery if not o.brand["mentioned"]})
+            found.append({
+                "type": "ENTITY_GAP",
+                "title": "AI knows your name but not your category",
+                "description": (
+                    f"{brand} appears in {round(branded_rate * 100)}% of answers when buyers name it, "
+                    f"but only {round(discovery_rate * 100)}% when they ask open category or use-case questions."
+                ),
+                "recommended_action": (
+                    "State what you are and who you are for in one sentence, then repeat it across your homepage title, "
+                    "headings and third-party profiles so AI links your name to the category."
+                ),
+                "impact": _impact(len(missed), total_prompts),
+                "confidence": _confidence(len(discovery) + len(branded)),
+                "evidence": {"discovery_rate": discovery_rate, "branded_rate": branded_rate, "prompts": missed[:10]},
+            })
+
+    # TECHNICAL_GAP: AI crawlers cannot reach or read the website (PRD 10, type 6). Facts from the site audit.
+    if audit and audit["findings"]:
+        order = {"high": 0, "medium": 1, "low": 2}
+        findings = sorted(audit["findings"], key=lambda f: order[f["impact"]])
+        found.append({
+            "type": "TECHNICAL_GAP",
+            "title": "Your robots.txt blocks AI crawlers" if findings[0]["code"] == "ROBOTS_BLOCKS_AI" else "AI crawlers have trouble reading your website",
+            "description": " ".join(f["message"] for f in findings),
+            "recommended_action": " ".join(f["action"] for f in findings),
+            "impact": findings[0]["impact"],
+            "confidence": 0.9,  # observed directly on the site, not inferred from answers
+            "evidence": {"url": audit["url"], "findings": findings},
+        })
+
+    for item in found:
+        item["evidence"]["expected_objective"] = OBJECTIVES[item["type"]]
+
     def weight(x: dict) -> int:
         ev = x["evidence"]
         return len(ev.get("prompts") or ev.get("domains") or [])
@@ -136,10 +202,15 @@ def detect(observations: list[Observation], brand: str, competitors: dict[int, s
     return sorted(found, key=lambda x: (IMPACT_ORDER[x["impact"]], -weight(x), -x["confidence"]))
 
 
-def generate_and_store(session: Session, scan: Scan, brand: str, observations: list[Observation]) -> list[Opportunity]:
+def generate_and_store(
+    session: Session, scan: Scan, brand: str, observations: list[Observation], audit: dict | None = None
+) -> list[Opportunity]:
     competitors = {c.id: c.name for c in session.scalars(select(Competitor).where(Competitor.project_id == scan.project_id))}
     session.execute(delete(Opportunity).where(Opportunity.scan_id == scan.id))
-    rows = [Opportunity(project_id=scan.project_id, scan_id=scan.id, **item) for item in detect(observations, brand, competitors)]
+    rows = [
+        Opportunity(project_id=scan.project_id, scan_id=scan.id, **item)
+        for item in detect(observations, brand, competitors, audit)
+    ]
     session.add_all(rows)
     session.flush()
     return rows

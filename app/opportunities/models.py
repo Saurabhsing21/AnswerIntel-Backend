@@ -12,6 +12,8 @@ OPPORTUNITY_TYPES = (
     "COMPETITOR_GAP",
     "POSITIONING_GAP",
     "COMPARISON_GAP",
+    "ENTITY_GAP",
+    "TECHNICAL_GAP",
 )
 OPPORTUNITY_STATUSES = ("open", "in_progress", "completed", "dismissed")
 

@@ -17,6 +17,7 @@ from app.common.database import engine as db_engine
 from app.competitors.models import Competitor
 from app.metrics.service import compute_and_store
 from app.opportunities.service import generate_and_store
+from app.opportunities.site_audit import audit_site
 from app.projects.models import Project
 from app.prompts.models import ScanPrompt
 from app.providers.base import AIProvider, ProviderContext
@@ -170,7 +171,12 @@ class ScanExecutionService:
 
             if scan.completed_runs:
                 data = compute_and_store(session, scan)
-                generate_and_store(session, scan, project.brand_name, data["observations"])
+                try:
+                    audit = audit_site(project.website)
+                except Exception:  # the audit is a bonus signal; it must never fail a scan
+                    log.exception("Site audit failed for scan %s", scan.id)
+                    audit = None
+                generate_and_store(session, scan, project.brand_name, data["observations"], audit)
 
             if scan.failed_runs == 0:
                 scan.status = "completed"

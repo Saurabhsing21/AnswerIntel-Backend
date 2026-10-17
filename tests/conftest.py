@@ -16,6 +16,12 @@ def rate_limits_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_network_site_audit(monkeypatch):
+    """Scans audit the brand's website; tests must never reach the real internet."""
+    monkeypatch.setattr("app.opportunities.site_audit.safe_get", lambda url, **kwargs: None)
+
+
+@pytest.fixture(autouse=True)
 def no_backoff_waiting(monkeypatch):
     """Provider retries use the real 30s/2m/10m delays in production; tests must not sleep through them."""
     monkeypatch.setattr("app.scans.execution._backoff", lambda seconds: None)
