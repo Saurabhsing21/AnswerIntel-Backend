@@ -52,7 +52,12 @@ def _get_report(session: Session, project_id: UUID, report_id: int, user_id: int
 
 def _export(report: Report, format: str):
     if format == "html":
-        return Response(render_html(report.content, report_title(report)), media_type="text/html")
+        # Defence in depth behind the HTML escaping: the page needs no scripts, frames, forms or remote loads.
+        return Response(
+            render_html(report.content, report_title(report)),
+            media_type="text/html",
+            headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"},
+        )
     if format == "pdf":
         return Response(render_pdf(report.content, report_title(report)), media_type="application/pdf")
     return serialize(report)

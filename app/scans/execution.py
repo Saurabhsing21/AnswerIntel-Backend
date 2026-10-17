@@ -187,6 +187,16 @@ class ScanExecutionService:
             scan.error_message = last_error if scan.failed_runs else None
             scan.completed_at = datetime.now(timezone.utc)
             session.commit()
+            log.info(
+                "scan finished",
+                extra={
+                    "scan_id": scan.id,
+                    "status": scan.status,
+                    "duration_s": round((scan.completed_at - scan.started_at).total_seconds(), 1),
+                    "completed_runs": scan.completed_runs,
+                    "failed_runs": scan.failed_runs,
+                },
+            )
 
 
 def run_scan(scan_id: int) -> None:

@@ -4,10 +4,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi.responses import JSONResponse
+
 from app.api.router import router as api_router
+from app.common import observability
 from app.common.config import settings
 from app.common.errors import register_error_handlers
 
+observability.configure_logging()
+observability.init_sentry()
 log = logging.getLogger(__name__)
 
 
@@ -36,9 +41,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 register_error_handlers(app)
+observability.install(app)
 app.include_router(api_router)
 
 
 @app.get("/health")
 def health_check():
     return {"status": "ok", "ai_enabled": settings.ai_enabled}
+
+
+@app.get("/ready")
+def ready():
+    checks, ok = observability.readiness()
+    return JSONResponse({"status": "ready" if ok else "unavailable", "checks": checks}, status_code=200 if ok else 503)

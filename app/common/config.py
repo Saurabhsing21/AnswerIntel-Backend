@@ -1,7 +1,11 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    app_env: str = "development"
+    sentry_dsn: str = ""  # empty = error monitoring off
+
     database_url: str
 
     jwt_secret_key: str
@@ -49,6 +53,13 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "extra": "ignore",
     }
+
+    @model_validator(mode="after")
+    def reject_weak_production_secrets(self):
+        # A guessable signing secret lets anyone mint valid tokens, so production refuses to boot with one.
+        if self.app_env == "production" and (len(self.jwt_secret_key) < 32 or "change-this" in self.jwt_secret_key.lower()):
+            raise ValueError("JWT_SECRET_KEY must be a random value of at least 32 characters when APP_ENV=production.")
+        return self
 
     @property
     def retry_delays(self) -> list[float]:
