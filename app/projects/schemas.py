@@ -9,6 +9,8 @@ class ProjectCreate(BaseModel):
     description: str | None = None
     category: str
     country: str
+    # Omitted = the user's personal workspace.
+    workspace_id: UUID | None = None
 
 
 class ProjectResponse(BaseModel):

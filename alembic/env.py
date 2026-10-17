@@ -26,6 +26,7 @@ from app.reports.models import Report
 from app.schedules.models import ScanSchedule
 from app.waitlist.models import WaitlistSignup
 from app.auth.models import RefreshToken
+from app.workspaces.models import Workspace, WorkspaceMember
 from app.prompts.models import Prompt
 config = context.config
 

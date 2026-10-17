@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
+from app.common.access import project_access
 from app.common.database import SessionLocal
 from app.competitors.models import Competitor
 from sqlalchemy import func
@@ -29,7 +30,7 @@ def get_user_project(
     return session.scalar(
         select(Project).where(
             Project.id == project_id,
-            Project.user_id == user_id,
+            project_access(user_id),
         )
     )
 

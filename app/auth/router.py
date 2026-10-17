@@ -11,6 +11,7 @@ from app.auth.refresh import issue_tokens, revoke, rotate
 from fastapi import Depends
 from app.auth.dependencies import get_current_user
 from app.common.ratelimit import limit_login
+from app.workspaces.models import Workspace, WorkspaceMember
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -35,6 +36,12 @@ def register(request: RegisterRequest):
         )
 
         session.add(user)
+        session.flush()
+        # Every account starts with a personal workspace that it owns (PRD 7).
+        workspace = Workspace(name=f"{request.email.split('@')[0]}'s workspace")
+        session.add(workspace)
+        session.flush()
+        session.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="owner"))
         session.commit()
         session.refresh(user)
 

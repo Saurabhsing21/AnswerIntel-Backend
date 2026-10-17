@@ -4,8 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
+from app.common.access import project_access
 from app.common.database import SessionLocal
+from app.common.errors import AppError
 from app.projects.models import Project
+from app.workspaces.models import WorkspaceMember
 from app.projects.schemas import ProjectCreate, ProjectUpdate
 from app.users.models import User
 
@@ -22,7 +25,16 @@ def create_project(
     current_user: User = Depends(get_current_user),
 ):
     with SessionLocal() as session:
+        # Omitted workspace = the earliest one the user belongs to, i.e. their personal workspace.
+        memberships = select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == current_user.id)
+        if request.workspace_id:
+            memberships = memberships.where(WorkspaceMember.workspace_id == request.workspace_id)
+        workspace_id = session.scalar(memberships.order_by(WorkspaceMember.created_at).limit(1))
+        if not workspace_id:
+            raise AppError(404, "WORKSPACE_NOT_FOUND", "Workspace not found.")
+
         project = Project(
+            workspace_id=workspace_id,
             user_id=current_user.id,
             brand_name=request.brand_name,
             website=str(request.website),
@@ -37,6 +49,7 @@ def create_project(
 
         return {
             "id": str(project.id),
+            "workspace_id": str(project.workspace_id),
             "brand_name": project.brand_name,
             "website": project.website,
             "description": project.description,
@@ -54,7 +67,7 @@ def get_project(
         project = session.scalar(
             select(Project).where(
                 Project.id == project_id,
-                Project.user_id == current_user.id,
+                project_access(current_user.id),
             )
         )
 
@@ -66,6 +79,7 @@ def get_project(
 
         return {
             "id": str(project.id),
+            "workspace_id": str(project.workspace_id),
             "brand_name": project.brand_name,
             "website": project.website,
             "description": project.description,
@@ -81,13 +95,14 @@ def list_projects(
     with SessionLocal() as session:
         projects = session.scalars(
             select(Project).where(
-                Project.user_id == current_user.id
+                project_access(current_user.id)
             )
         ).all()
 
         return [
             {
                 "id": str(project.id),
+                "workspace_id": str(project.workspace_id),
                 "brand_name": project.brand_name,
                 "website": project.website,
                 "description": project.description,
@@ -107,7 +122,7 @@ def update_project(
         project = session.scalar(
             select(Project).where(
                 Project.id == project_id,
-                Project.user_id == current_user.id,
+                project_access(current_user.id),
             )
         )
 
@@ -137,6 +152,7 @@ def update_project(
 
         return {
             "id": str(project.id),
+            "workspace_id": str(project.workspace_id),
             "brand_name": project.brand_name,
             "website": project.website,
             "description": project.description,
@@ -153,7 +169,7 @@ def delete_project(
         project = session.scalar(
             select(Project).where(
                 Project.id == project_id,
-                Project.user_id == current_user.id,
+                project_access(current_user.id),
             )
         )
 

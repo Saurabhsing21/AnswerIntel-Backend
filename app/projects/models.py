@@ -16,6 +16,13 @@ class Project(Base):
         default=uuid4,
     )
 
+    workspace_id: Mapped[UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # The creator. Access is decided by workspace membership, not by this column.
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
