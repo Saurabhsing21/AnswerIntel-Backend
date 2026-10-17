@@ -5,9 +5,9 @@ from app.auth.password import hash_password
 from app.auth.schemas import RegisterRequest
 from app.common.database import SessionLocal
 from app.users.models import User
-from app.auth.schemas import LoginRequest, RegisterRequest
+from app.auth.schemas import LoginRequest, RefreshRequest, RegisterRequest
 from app.auth.password import hash_password, verify_password
-from app.auth.jwt import create_access_token
+from app.auth.refresh import issue_tokens, revoke, rotate
 from fastapi import Depends
 from app.auth.dependencies import get_current_user
 from app.common.ratelimit import limit_login
@@ -67,12 +67,28 @@ def login(request: LoginRequest):
                 detail="Invalid email or password",
             )
 
-        access_token = create_access_token(user.id)
+        if not user.is_active:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password",
+            )
 
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-        }
+        tokens = issue_tokens(session, user)
+        session.commit()
+        return tokens
+
+
+@router.post("/refresh")
+def refresh(request: RefreshRequest):
+    with SessionLocal() as session:
+        return rotate(session, request.refresh_token)
+
+
+@router.post("/logout")
+def logout(request: RefreshRequest):
+    with SessionLocal() as session:
+        revoke(session, request.refresh_token)
+        return {"ok": True}
 
 @router.get("/me")
 def get_me(current_user: User = Depends(get_current_user)):

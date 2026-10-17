@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 30  # PRD 6
 
     # AI gateway. Empty key = simulated provider (clearly labelled in the API and UI).
     openrouter_api_key: str = ""
