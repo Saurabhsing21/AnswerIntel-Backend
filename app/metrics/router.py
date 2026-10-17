@@ -49,87 +49,91 @@ def _latest_scan_id(session, project_id, scan_id: int | None) -> int | None:
     return rows[-1].Scan.id if rows else None
 
 
+def build_dashboard(session, project) -> dict:
+    competitors = session.scalars(select(Competitor).where(Competitor.project_id == project.id).order_by(Competitor.id)).all()
+    active_prompts = session.scalar(
+        select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
+    ) or 0
+    latest_scan = session.scalar(select(Scan).where(Scan.project_id == project.id).order_by(Scan.id.desc()))
+    history = _snapshots(session, project.id)
+
+    base = {
+        "project": {"id": str(project.id), "brand_name": project.brand_name, "website": project.website,
+                    "category": project.category, "country": project.country},
+        "counts": {"competitors": len(competitors), "active_prompts": active_prompts},
+        "latest_scan": serialize_scan(latest_scan) if latest_scan else None,
+    }
+    if not history:
+        return {**base, "has_data": False, "visibility": None, "engines": [], "competitors": [],
+                "trend": [], "top_opportunities": [], "recent_answers": []}
+
+    snapshot, scan = history[-1]
+    previous = history[-2].MetricSnapshot if len(history) > 1 else None
+    visibility = {k: getattr(snapshot, k) for k in METRIC_KEYS}
+    visibility["total_responses"] = snapshot.total_responses
+    visibility["deltas"] = {
+        k: (round(getattr(snapshot, k) - getattr(previous, k), 4)
+            if previous and getattr(snapshot, k) is not None and getattr(previous, k) is not None else None)
+        for k in METRIC_KEYS
+    }
+
+    comp_metrics = {m.competitor_id: m for m in session.scalars(select(CompetitorMetric).where(CompetitorMetric.scan_id == scan.id))}
+    brand_citations = session.scalar(
+        select(func.count()).select_from(Citation).join(AIResponseRecord, AIResponseRecord.id == Citation.ai_response_id)
+        .where(AIResponseRecord.scan_id == scan.id, Citation.is_brand_owned)
+    ) or 0
+    competitor_rows = [{
+        "id": None, "name": project.brand_name, "is_you": True,
+        "mention_rate": snapshot.mention_rate, "recommendation_rate": snapshot.recommendation_rate,
+        "share_of_voice": snapshot.share_of_voice, "average_position": snapshot.average_position,
+        "citation_count": brand_citations,
+    }]
+    for c in competitors:
+        m = comp_metrics.get(c.id)
+        if m:
+            competitor_rows.append({
+                "id": c.id, "name": c.name, "is_you": False, "mention_rate": m.mention_rate,
+                "recommendation_rate": m.recommendation_rate, "share_of_voice": m.share_of_voice,
+                "average_position": m.average_position, "citation_count": m.citation_count,
+            })
+    competitor_rows.sort(key=lambda r: r["mention_rate"], reverse=True)
+
+    opportunities = session.scalars(
+        select(Opportunity).where(Opportunity.scan_id == scan.id, Opportunity.status.in_(("open", "in_progress")))
+    ).all()
+    opportunities = sorted(opportunities, key=lambda o: (IMPACT_ORDER.get(o.impact, 9), -o.confidence))[:5]
+
+    recent = session.execute(
+        select(AIResponseRecord, Mention).join(Mention, Mention.ai_response_id == AIResponseRecord.id)
+        .where(AIResponseRecord.scan_id == scan.id).order_by(AIResponseRecord.id.desc()).limit(8)
+    ).all()
+
+    return {
+        **base,
+        "has_data": True,
+        "metrics_scan": serialize_scan(scan),
+        "visibility": visibility,
+        "engines": [{"key": k, "name": _engine_name(k), **v} for k, v in snapshot.by_engine.items()],
+        "competitors": competitor_rows,
+        "trend": [{
+            "scan_id": s.id, "date": s.completed_at or s.created_at,
+            **{k: getattr(m, k) for k in ("mention_rate", "recommendation_rate", "share_of_voice")},
+        } for m, s in history],
+        "top_opportunities": [serialize_opportunity(o) for o in opportunities],
+        "recent_answers": [{
+            "id": r.AIResponseRecord.id, "engine": r.AIResponseRecord.engine,
+            "engine_name": _engine_name(r.AIResponseRecord.engine), "prompt": r.AIResponseRecord.prompt,
+            "verdict": _verdict(r.Mention.mentioned, r.Mention.recommended), "position": r.Mention.position,
+            "created_at": r.AIResponseRecord.created_at,
+        } for r in recent],
+    }
+
+
 @router.get("/dashboard")
 def dashboard(project_id: UUID, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
-        competitors = session.scalars(select(Competitor).where(Competitor.project_id == project.id).order_by(Competitor.id)).all()
-        active_prompts = session.scalar(
-            select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
-        ) or 0
-        latest_scan = session.scalar(select(Scan).where(Scan.project_id == project.id).order_by(Scan.id.desc()))
-        history = _snapshots(session, project.id)
-
-        base = {
-            "project": {"id": str(project.id), "brand_name": project.brand_name, "website": project.website,
-                        "category": project.category, "country": project.country},
-            "counts": {"competitors": len(competitors), "active_prompts": active_prompts},
-            "latest_scan": serialize_scan(latest_scan) if latest_scan else None,
-        }
-        if not history:
-            return {**base, "has_data": False, "visibility": None, "engines": [], "competitors": [],
-                    "trend": [], "top_opportunities": [], "recent_answers": []}
-
-        snapshot, scan = history[-1]
-        previous = history[-2].MetricSnapshot if len(history) > 1 else None
-        visibility = {k: getattr(snapshot, k) for k in METRIC_KEYS}
-        visibility["total_responses"] = snapshot.total_responses
-        visibility["deltas"] = {
-            k: (round(getattr(snapshot, k) - getattr(previous, k), 4)
-                if previous and getattr(snapshot, k) is not None and getattr(previous, k) is not None else None)
-            for k in METRIC_KEYS
-        }
-
-        comp_metrics = {m.competitor_id: m for m in session.scalars(select(CompetitorMetric).where(CompetitorMetric.scan_id == scan.id))}
-        brand_citations = session.scalar(
-            select(func.count()).select_from(Citation).join(AIResponseRecord, AIResponseRecord.id == Citation.ai_response_id)
-            .where(AIResponseRecord.scan_id == scan.id, Citation.is_brand_owned)
-        ) or 0
-        competitor_rows = [{
-            "id": None, "name": project.brand_name, "is_you": True,
-            "mention_rate": snapshot.mention_rate, "recommendation_rate": snapshot.recommendation_rate,
-            "share_of_voice": snapshot.share_of_voice, "average_position": snapshot.average_position,
-            "citation_count": brand_citations,
-        }]
-        for c in competitors:
-            m = comp_metrics.get(c.id)
-            if m:
-                competitor_rows.append({
-                    "id": c.id, "name": c.name, "is_you": False, "mention_rate": m.mention_rate,
-                    "recommendation_rate": m.recommendation_rate, "share_of_voice": m.share_of_voice,
-                    "average_position": m.average_position, "citation_count": m.citation_count,
-                })
-        competitor_rows.sort(key=lambda r: r["mention_rate"], reverse=True)
-
-        opportunities = session.scalars(
-            select(Opportunity).where(Opportunity.scan_id == scan.id, Opportunity.status.in_(("open", "in_progress")))
-        ).all()
-        opportunities = sorted(opportunities, key=lambda o: (IMPACT_ORDER.get(o.impact, 9), -o.confidence))[:5]
-
-        recent = session.execute(
-            select(AIResponseRecord, Mention).join(Mention, Mention.ai_response_id == AIResponseRecord.id)
-            .where(AIResponseRecord.scan_id == scan.id).order_by(AIResponseRecord.id.desc()).limit(8)
-        ).all()
-
-        return {
-            **base,
-            "has_data": True,
-            "metrics_scan": serialize_scan(scan),
-            "visibility": visibility,
-            "engines": [{"key": k, "name": _engine_name(k), **v} for k, v in snapshot.by_engine.items()],
-            "competitors": competitor_rows,
-            "trend": [{
-                "scan_id": s.id, "date": s.completed_at or s.created_at,
-                **{k: getattr(m, k) for k in ("mention_rate", "recommendation_rate", "share_of_voice")},
-            } for m, s in history],
-            "top_opportunities": [serialize_opportunity(o) for o in opportunities],
-            "recent_answers": [{
-                "id": r.AIResponseRecord.id, "engine": r.AIResponseRecord.engine,
-                "engine_name": _engine_name(r.AIResponseRecord.engine), "prompt": r.AIResponseRecord.prompt,
-                "verdict": _verdict(r.Mention.mentioned, r.Mention.recommended), "position": r.Mention.position,
-                "created_at": r.AIResponseRecord.created_at,
-            } for r in recent],
-        }
+        return build_dashboard(session, project)
 
 
 @router.get("/scans/{scan_id}/results")

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
+    # Report email delivery (Resend). Empty key = sending is disabled and the API says so.
+    resend_api_key: str = ""
+    email_from: str = "AnswerIntel <reports@answerintel.app>"
+
     model_config = {
         "env_file": ".env",
         "extra": "ignore",
