@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.auth.router import router as auth_router
 from app.competitors.router import router as competitors_router
+from app.experiments.router import router as experiments_router
 from app.metrics.router import router as analytics_router
 from app.opportunities.router import router as opportunities_router
 from app.projects.router import router as projects_router
@@ -17,3 +18,4 @@ router.include_router(prompts_router)
 router.include_router(scans_router)
 router.include_router(analytics_router)
 router.include_router(opportunities_router)
+router.include_router(experiments_router)
