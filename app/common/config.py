@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Empty = run scans in-process (local dev). Set = Celery workers on Redis (PRD 56).
     redis_url: str = ""
 
+    raw_response_retention_days: int = 365  # PRD 88; aggregates are kept
+
     max_competitors: int = 5
     max_active_prompts: int = 50
 

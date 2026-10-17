@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.projects.models import Project
@@ -12,6 +13,7 @@ from app.reports.render import render_html
 from app.reports.service import create_report, report_title
 from app.scans.execution import run_scan
 from app.scans.models import Scan
+from app.scans.retention import purge_expired
 from app.schedules.service import dispatch_due_scans, requeue_stuck_scans
 from app.users.models import User
 from app.worker.celery_app import celery_app
@@ -51,6 +53,11 @@ def run_scan_task(scan_id: int, send_report: bool = False) -> None:
 @celery_app.task(name="schedules.dispatch")
 def dispatch_scheduled_scans_task() -> list[int]:
     return dispatch_due_scans(datetime.now(timezone.utc), lambda scan_id, report: run_scan_task.delay(scan_id, report))
+
+
+@celery_app.task(name="maintenance.purge_expired")
+def purge_expired_task() -> dict:
+    return purge_expired(datetime.now(timezone.utc), settings.raw_response_retention_days)
 
 
 @celery_app.task(name="schedules.requeue_stuck")

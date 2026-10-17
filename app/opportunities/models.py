@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text, Uuid, func
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -20,6 +20,7 @@ OPPORTUNITY_STATUSES = ("open", "in_progress", "completed", "dismissed")
 
 class Opportunity(Base):
     __tablename__ = "opportunities"
+    __table_args__ = (Index("ix_opportunities_project_created", "project_id", "created_at"),)  # PRD 87
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(

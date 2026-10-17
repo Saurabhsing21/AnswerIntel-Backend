@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -14,6 +14,7 @@ class Report(Base):
     """A frozen founder report (PRD 43). Content is a snapshot; later scans never change it."""
 
     __tablename__ = "reports"
+    __table_args__ = (Index("ix_reports_project_created", "project_id", "created_at"),)  # PRD 87
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(

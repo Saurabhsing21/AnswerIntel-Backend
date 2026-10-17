@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -12,6 +12,7 @@ ACTIVE_STATUSES = ("queued", "running")
 
 class Scan(Base):
     __tablename__ = "scans"
+    __table_args__ = (Index("ix_scans_project_created", "project_id", "created_at"),)  # PRD 87
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[UUID] = mapped_column(

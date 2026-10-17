@@ -22,5 +22,6 @@ celery_app.conf.update(
     beat_schedule={
         "dispatch-scheduled-scans": {"task": "schedules.dispatch", "schedule": crontab(minute=0)},
         "requeue-stuck-scans": {"task": "schedules.requeue_stuck", "schedule": crontab(minute="*/10")},
+        "purge-expired-data": {"task": "maintenance.purge_expired", "schedule": crontab(hour=3, minute=30)},
     },
 )
