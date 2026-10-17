@@ -1,4 +1,4 @@
-# AnswerIntel — Product PRD
+# SeenLens — Product PRD
 
 # 1. Product Vision
 

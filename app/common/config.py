@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # Report email delivery (Resend). Empty key = sending is disabled and the API says so.
     resend_api_key: str = ""
-    email_from: str = "AnswerIntel <reports@answerintel.app>"
+    email_from: str = "SeenLens <reports@seenlens.com>"
 
     model_config = {
         "env_file": ".env",

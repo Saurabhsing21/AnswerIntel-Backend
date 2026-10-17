@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 ALLOWED_PORTS = {80, 443}
-USER_AGENT = "AnswerIntelBot/1.0 (+https://answerintel.app)"
+USER_AGENT = "SeenLensBot/1.0 (+https://seenlens.com)"
 
 
 class UnsafeURL(ValueError):

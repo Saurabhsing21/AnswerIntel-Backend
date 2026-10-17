@@ -1,4 +1,4 @@
-# AnswerIntel API
+# SeenLens API
 
 FastAPI + PostgreSQL + Redis/Celery backend (see `docs/technical-prd.md`). A modular monolith: one API,
 background workers for scans, and a scheduler.

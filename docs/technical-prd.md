@@ -1,4 +1,4 @@
-# AnswerIntel — Technical PRD
+# SeenLens — Technical PRD
 
 ## AI Visibility & Competitor Intelligence Platform
 
@@ -17,9 +17,9 @@
 
 # 1. Product Definition
 
-AnswerIntel measures how AI assistants describe and recommend businesses.
+SeenLens measures how AI assistants describe and recommend businesses.
 
-A customer gives AnswerIntel:
+A customer gives SeenLens:
 
 - Business
 - Website
@@ -27,7 +27,7 @@ A customer gives AnswerIntel:
 - Market
 - Competitors
 
-AnswerIntel automatically generates realistic customer prompts, sends them to supported AI/search providers, analyzes the responses, identifies competitors and citations, calculates visibility metrics, detects visibility gaps, and recommends actions.
+SeenLens automatically generates realistic customer prompts, sends them to supported AI/search providers, analyzes the responses, identifies competitors and citations, calculates visibility metrics, detects visibility gaps, and recommends actions.
 
 The core loop is:
 
@@ -65,7 +65,7 @@ Measure Change
 
 # 2. Product Boundary
 
-AnswerIntel is NOT initially:
+SeenLens is NOT initially:
 
 - an SEO replacement
 - a CMS
@@ -75,7 +75,7 @@ AnswerIntel is NOT initially:
 - a CRM
 - a content-generation platform
 
-AnswerIntel's initial job is:
+SeenLens's initial job is:
 
 > **Measure → Explain → Recommend → Re-measure**
 
@@ -3197,7 +3197,7 @@ Metric
 Opportunity
 ```
 
-That is the heart of AnswerIntel.
+That is the heart of SeenLens.
 
 ---
 
@@ -3359,7 +3359,7 @@ If a feature doesn't contribute to one of these four questions, it should probab
 # 103. Final Product Architecture
 
 ```text
-                   ANSWERINTEL
+                   SEENLENS
                         │
         ┌───────────────┼────────────────┐
         │               │                │

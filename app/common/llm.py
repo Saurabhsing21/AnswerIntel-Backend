@@ -28,8 +28,8 @@ def chat(
 
     headers = {
         "Authorization": f"Bearer {settings.openrouter_api_key}",
-        "HTTP-Referer": "https://answerintel.vercel.app",
-        "X-Title": "AnswerIntel",
+        "HTTP-Referer": "https://seenlens.com",
+        "X-Title": "SeenLens",
     }
     last_error: Exception | None = None
     for attempt in range(settings.provider_max_retries + 1):

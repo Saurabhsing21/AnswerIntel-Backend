@@ -89,7 +89,7 @@ def add_member(workspace_id: UUID, payload: MemberAdd, current_user: User = Depe
         # Adds an existing account. Email invitations for people without an account are not built yet.
         user = session.scalar(select(User).where(func.lower(User.email) == str(payload.email).lower()))
         if not user:
-            raise AppError(404, "USER_NOT_FOUND", "No AnswerIntel account exists for that email.")
+            raise AppError(404, "USER_NOT_FOUND", "No SeenLens account exists for that email.")
         if _membership(session, workspace_id, user.id):
             raise AppError(409, "ALREADY_MEMBER", "That person is already in this workspace.")
         session.add(WorkspaceMember(workspace_id=workspace_id, user_id=user.id, role=payload.role))
