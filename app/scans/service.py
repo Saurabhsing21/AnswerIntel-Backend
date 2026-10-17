@@ -1,6 +1,9 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.common.config import settings
 from app.common.errors import AppError
 from app.projects.models import Project
 from app.prompts.models import Prompt
@@ -27,6 +30,13 @@ class ScanService:
         )
         if running:
             raise AppError(409, "SCAN_ALREADY_RUNNING", "A scan is already running for this project.")
+        recent = session.scalar(
+            select(func.count()).select_from(Scan).where(
+                Scan.project_id == project.id, Scan.created_at >= datetime.now(timezone.utc) - timedelta(days=1)
+            )
+        ) or 0
+        if recent >= settings.max_scans_per_day:
+            raise AppError(429, "SCAN_LIMIT_REACHED", "Daily scan limit reached for this project. Try again tomorrow.")
         active = session.scalar(
             select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
         ) or 0

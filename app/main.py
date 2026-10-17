@@ -15,12 +15,14 @@ log = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     from app.scans.execution import recover_interrupted_scans
 
-    try:
-        recovered = recover_interrupted_scans()
-        if recovered:
-            log.warning("Marked %s interrupted scan(s) as failed/partial", recovered)
-    except Exception:  # database may be unavailable at boot; health check will show it
-        log.exception("Could not recover interrupted scans")
+    # With a queue, unacknowledged scan jobs are redelivered and resume; only in-process scans are lost on restart.
+    if not settings.redis_url:
+        try:
+            recovered = recover_interrupted_scans()
+            if recovered:
+                log.warning("Marked %s interrupted scan(s) as failed/partial", recovered)
+        except Exception:  # database may be unavailable at boot; health check will show it
+            log.exception("Could not recover interrupted scans")
     yield
 
 

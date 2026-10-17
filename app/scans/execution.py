@@ -1,15 +1,19 @@
 import logging
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.analysis.base import AnalysisContext
 from app.analysis.persistence import save_analysis
 from app.analysis.service import ResponseAnalysisService
 from app.common.config import settings
 from app.common.database import SessionLocal
+from app.common.database import engine as db_engine
 from app.competitors.models import Competitor
 from app.metrics.service import compute_and_store
 from app.opportunities.service import generate_and_store
@@ -21,6 +25,26 @@ from app.providers.response_model import AIResponseRecord
 from app.scans.models import Scan
 
 log = logging.getLogger(__name__)
+
+SCAN_LOCK_NAMESPACE = 7001
+
+
+def _backoff(seconds: float) -> None:
+    time.sleep(seconds)  # separate function so tests can skip real waiting
+
+
+@contextmanager
+def scan_lock(scan_id: int):
+    """Postgres advisory lock so a redelivered job cannot run the same scan twice at once."""
+    with db_engine.connect() as conn:
+        got = bool(conn.execute(text("select pg_try_advisory_lock(:ns, :id)"), {"ns": SCAN_LOCK_NAMESPACE, "id": scan_id}).scalar())
+        conn.commit()
+        try:
+            yield got
+        finally:
+            if got:
+                conn.execute(text("select pg_advisory_unlock(:ns, :id)"), {"ns": SCAN_LOCK_NAMESPACE, "id": scan_id})
+                conn.commit()
 
 
 class ScanExecutionService:
@@ -37,23 +61,26 @@ class ScanExecutionService:
         self.analysis_service = analysis_service or ResponseAnalysisService()
 
     def run(self, scan_id: int) -> None:
-        try:
-            self._run(scan_id)
-        except Exception as exc:  # never leave a scan stuck in "running"
-            log.exception("Scan %s crashed", scan_id)
-            with SessionLocal() as session:
-                scan = session.get(Scan, scan_id)
-                if scan and scan.status in ("queued", "running"):
-                    scan.status = "failed"
-                    scan.error_message = f"Scan crashed: {exc.__class__.__name__}"
-                    scan.completed_at = datetime.now(timezone.utc)
-                    session.commit()
+        with scan_lock(scan_id) as acquired:
+            if not acquired:
+                return  # another worker is already running this scan
+            try:
+                self._run(scan_id)
+            except Exception as exc:  # never leave a scan stuck in "running"
+                log.exception("Scan %s crashed", scan_id)
+                with SessionLocal() as session:
+                    scan = session.get(Scan, scan_id)
+                    if scan and scan.status in ("queued", "running"):
+                        scan.status = "failed"
+                        scan.error_message = f"Scan crashed: {exc.__class__.__name__}"
+                        scan.completed_at = datetime.now(timezone.utc)
+                        session.commit()
 
     def _run(self, scan_id: int) -> None:
         with SessionLocal() as session:
             scan = session.get(Scan, scan_id)
-            if not scan or scan.status != "queued":
-                return  # idempotent: a scan is executed at most once
+            if not scan or scan.status not in ("queued", "running"):
+                return  # idempotent: a finished scan is never executed again; a "running" one resumes
             project = session.get(Project, scan.project_id)
             competitors = session.scalars(select(Competitor).where(Competitor.project_id == project.id)).all()
             prompts = session.scalars(
@@ -73,14 +100,36 @@ class ScanExecutionService:
                 variation=scan.id,
             )
 
+            done = {
+                (row[0], row[1])
+                for row in session.execute(
+                    select(AIResponseRecord.scan_prompt_id, AIResponseRecord.engine).where(AIResponseRecord.scan_id == scan.id)
+                )
+            }
             scan.status = "running"
-            scan.started_at = datetime.now(timezone.utc)
+            scan.started_at = scan.started_at or datetime.now(timezone.utc)
             scan.provider = self.provider.name
             scan.total_runs = len(prompts) * len(engines)
+            scan.completed_runs = len(done)  # a resumed scan keeps the answers it already stored
+            scan.failed_runs = 0
             session.commit()
 
+            slots = {e.key: threading.BoundedSemaphore(max(1, settings.provider_max_parallel_per_engine)) for e in engines}
+
+            def ask(prompt_text: str, engine):
+                """One provider call with the PRD 59 backoff. A backing-off call does not hold an engine slot."""
+                delays = settings.retry_delays
+                for attempt in range(len(delays) + 1):
+                    try:
+                        with slots[engine.key]:
+                            return self.provider.ask(prompt_text, engine.model, provider_context)
+                    except Exception:
+                        if attempt == len(delays):
+                            raise
+                    _backoff(delays[attempt])
+
             def work(prompt: ScanPrompt, engine):
-                response = self.provider.ask(prompt.text, engine.model, provider_context)
+                response = ask(prompt.text, engine)
                 result = self.analysis_service.analyze(
                     response.text,
                     replace(analysis_context, prompt=prompt.text),
@@ -89,7 +138,7 @@ class ScanExecutionService:
                 return response, result
 
             last_error: str | None = None
-            jobs = [(p.id, p.text, p.category, p.intent, e) for p in prompts for e in engines]
+            jobs = [(p.id, p.text, p.category, p.intent, e) for p in prompts for e in engines if (p.id, e.key) not in done]
             snapshot = {p.id: p for p in prompts}
             with ThreadPoolExecutor(max_workers=max(1, settings.scan_concurrency)) as pool:
                 futures = {pool.submit(work, snapshot[pid], engine): (pid, engine) for pid, _, _, _, engine in jobs}

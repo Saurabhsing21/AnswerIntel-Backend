@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -10,6 +10,8 @@ class AIResponseRecord(Base):
     """Raw observation: exactly what an engine said. Never rewritten (PRD section 22)."""
 
     __tablename__ = "ai_responses"
+    # One observation per prompt and engine in a scan: no duplicate provider calls (PRD 58).
+    __table_args__ = (UniqueConstraint("scan_id", "scan_prompt_id", "engine", name="uq_ai_response_observation"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     scan_id: Mapped[int] = mapped_column(

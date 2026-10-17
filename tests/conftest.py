@@ -8,6 +8,12 @@ from app.main import app
 API = "/api/v1"
 
 
+@pytest.fixture(autouse=True)
+def no_backoff_waiting(monkeypatch):
+    """Provider retries use the real 30s/2m/10m delays in production; tests must not sleep through them."""
+    monkeypatch.setattr("app.scans.execution._backoff", lambda seconds: None)
+
+
 @pytest.fixture(scope="session")
 def client() -> TestClient:
     return TestClient(app)

@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     provider_timeout_seconds: float = 90
     provider_max_retries: int = 2
     scan_concurrency: int = 4
+    # Seconds to wait before each retry of a failed provider call (PRD 59). Three delays = three retries.
+    provider_retry_delays: str = "30,120,600"
+    provider_max_parallel_per_engine: int = 2
+    max_scans_per_day: int = 20  # per project (PRD 60-61)
+    # Empty = run scans in-process (local dev). Set = Celery workers on Redis (PRD 56).
+    redis_url: str = ""
 
     max_competitors: int = 5
     max_active_prompts: int = 50
@@ -36,6 +42,10 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "extra": "ignore",
     }
+
+    @property
+    def retry_delays(self) -> list[float]:
+        return [float(d) for d in self.provider_retry_delays.split(",") if d.strip()]
 
     @property
     def ai_enabled(self) -> bool:

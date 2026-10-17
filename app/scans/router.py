@@ -9,7 +9,7 @@ from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.prompts.models import ScanPrompt
 from app.providers.response_model import AIResponseRecord
-from app.scans.execution import run_scan
+from app.scans.queue import enqueue_scan
 from app.scans.models import Scan
 from app.scans.service import ScanService
 from app.users.models import User
@@ -58,8 +58,8 @@ def create_scan(
         scan = ScanService().start_scan(session=session, project=project)
         session.commit()
         session.refresh(scan)
-        # Runs after the response is sent; the client polls GET /scans/{id}.
-        background_tasks.add_task(run_scan, scan.id)
+        # Runs after the response is sent (worker queue, or in-process without Redis); the client polls GET /scans/{id}.
+        enqueue_scan(scan.id, background_tasks)
         return serialize(scan)
 
 
