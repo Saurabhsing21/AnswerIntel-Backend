@@ -57,7 +57,7 @@ app refuses to start with a weak `JWT_SECRET_KEY`.
 
 ## The product loop
 
-register -> workspace (personal one is created) -> project -> competitors (max 5) -> `POST /prompts/generate` ->
+register -> workspace (personal one is created, with a 14-day trial) -> project -> competitors (plan limit) -> `POST /prompts/generate` ->
 review prompts -> `POST /scans` (queued; poll `GET /scans/{id}`) -> `GET /dashboard`, `/scans/{id}/results`,
 `/citations`, `/competitors/analysis`, `/opportunities` -> `POST /experiments` (baseline) -> change the site ->
 re-scan -> `POST /experiments/{id}/complete` -> `POST /reports` (share, export HTML/PDF, email).
@@ -81,10 +81,37 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 | `experiments` | Baseline and follow-up snapshots with before/after comparison |
 | `reports` | Weekly/monthly/manual reports, share links, HTML/PDF export, Resend email |
 | `waitlist` | Public landing-page signups (idempotent, rate limited) |
+| `billing` | Plans and entitlements (every limit), Stripe Checkout/Portal, webhook, trial emails |
 | `common` | Config, database, errors, rate limiting, safe HTTP fetcher, observability |
+
+## Billing (Stripe)
+
+Each workspace starts on a 14-day trial with Pro limits; Starter and Pro are paid through Stripe. Limits live
+in `app/billing/plans.py`. Without `STRIPE_SECRET_KEY` trials still work and checkout says billing is off.
+
+Setup in Stripe test mode:
+
+1. In the Stripe dashboard (test mode) create two products, Starter and Pro, each with a monthly and a yearly
+   recurring USD price. Put the four price ids in `STRIPE_PRICE_STARTER_MONTHLY`, `..._YEARLY`,
+   `STRIPE_PRICE_PRO_MONTHLY`, `..._YEARLY`, and the secret key (`sk_test_...`) in `STRIPE_SECRET_KEY`.
+2. Turn on the Customer Portal (Settings -> Billing -> Customer portal): allow updating payment methods,
+   viewing invoices, cancelling, and switching between the four prices.
+3. Forward webhooks locally: `stripe listen --forward-to localhost:8000/api/v1/billing/webhook` and put the
+   printed `whsec_...` in `STRIPE_WEBHOOK_SECRET`. In production add an endpoint for the same path with the
+   events `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`, `invoice.paid` and `invoice.payment_failed`. Stripe calls the API
+   directly, not through the Next.js proxy.
+4. Set `APP_BASE_URL` to the dashboard URL (Checkout and the Portal return there).
+5. Try it: Checkout with `4242 4242 4242 4242` (plan flips to the paid tier), then `4000 0000 0000 0341`
+   (payment fails: past due with a 7-day grace, then read-only). Cancel in the Portal. For trial expiry,
+   set `trial_ends_at` in the past on the workspace's `subscriptions` row.
+
+Celery beat sends "trial ends in 3 days" and "trial ended" emails daily (`billing.trial_notices`); a failed
+payment emails the owners from the webhook. Both use Resend and are skipped when it is not configured.
 
 ## Known limits
 
 - Adding a workspace member works for existing accounts only; email invitations are not built.
 - Scan and report IDs are integers (the PRD sketches UUIDs); routes are nested under `/projects/{id}/...`.
-- Billing and the "ask my AI visibility" chat are intentionally not built (PRD section 99).
+- The "ask my AI visibility" chat is intentionally not built (PRD section 99).
+- Billing has no tax/GST invoicing yet (Stripe Tax can be added later).

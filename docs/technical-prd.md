@@ -2452,42 +2452,54 @@ updated_at TIMESTAMP
 
 # 83. Billing Architecture
 
-Do not implement complex billing initially.
+Billing is built (it reverses the earlier "do not build billing yet" note): every scan costs real LLM
+money, so limits follow a paid plan per workspace. Stripe is the payment provider.
 
-But design for it.
-
-Possible future plans:
-
-```text
-Free
-Starter
-Growth
-Agency
-```
-
-Usage limits:
+Plans (limits in `app/billing/plans.py`, prices in Stripe):
 
 ```text
-projects
-prompts
-scans/month
-AI providers
-historical retention
-reports
+Trial    14 days, no card, Pro limits. Read-only when it ends unconverted.
+Starter  $29/mo or $290/yr: 1 project, 25 active prompts, 3 competitors, 2 engines,
+         5 scans/day, 3 seats, 6-month retention, no weekly schedule, no experiments.
+Pro      $79/mo or $790/yr: 5 projects, 100 active prompts, 10 competitors, all engines,
+         20 scans/day, 10 seats, 12-month retention, weekly schedules and experiments.
+Lapsed   canceled, unpaid, trial over, or past due beyond a 7-day grace: read-only
+         (view and export; no scans, prompts, competitors, projects or invites).
 ```
 
-Create an internal usage model:
+Billed per workspace: the owner pays and every member shares the limits. Global settings
+(`MAX_ACTIVE_PROMPTS`, `MAX_COMPETITORS`, `MAX_SCANS_PER_DAY`, `RAW_RESPONSE_RETENTION_DAYS`) stay as hard
+ceilings that a plan can only lower.
 
 ```sql
-usage_records
+subscriptions
 -------------
-id UUID PK
-workspace_id UUID
-metric VARCHAR
-quantity INTEGER
-period_start DATE
-period_end DATE
+id SERIAL PK
+workspace_id UUID UNIQUE FK
+plan VARCHAR             -- trial | starter | pro
+interval VARCHAR         -- month | year
+status VARCHAR           -- Stripe status, or trialing for the card-free trial
+trial_ends_at, current_period_end, grace_ends_at TIMESTAMPTZ
+cancel_at_period_end BOOLEAN
+notified VARCHAR         -- last trial email sent
+stripe_customer_id, stripe_subscription_id VARCHAR UNIQUE
+
+stripe_events
+-------------
+id VARCHAR PK            -- Stripe event id; makes webhooks idempotent
+type VARCHAR
+created_at TIMESTAMPTZ
 ```
+
+Flow: `POST /workspaces/{id}/billing/checkout` (owner) returns a Stripe Checkout URL;
+`POST /workspaces/{id}/billing/portal` returns a Customer Portal URL for card, invoices, plan changes and
+cancellation; `GET /workspaces/{id}/billing` shows plan, status and usage to every member. Stripe calls
+`POST /api/v1/billing/webhook` (signature checked, not rate limited). The plan always comes from Stripe's
+subscription object, never from the browser redirect. Refused actions return `PLAN_LIMIT` or
+`SUBSCRIPTION_INACTIVE` (402) or the older `SCAN_LIMIT_REACHED`, `PROMPT_LIMIT`, `COMPETITOR_LIMIT`, each
+with `error.limit` naming the limit so the UI can offer an upgrade.
+
+Out of scope for v1: Stripe Tax / GST invoicing, usage-based metering, agency plans.
 
 ---
 
@@ -3167,7 +3179,6 @@ If these 19 things work reliably, we have the first real product.
 Do not build:
 
 ```text
-Billing
 Enterprise SSO
 Agency white-label
 50 AI providers
@@ -3198,6 +3209,8 @@ Opportunity
 ```
 
 That is the heart of SeenLens.
+
+(Billing was on this list; it is now built, see section 83, because scans cost real money.)
 
 ---
 
