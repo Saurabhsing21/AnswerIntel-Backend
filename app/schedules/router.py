@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
+from app.billing.plans import entitlements, require_feature
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.schedules.models import ScanSchedule
@@ -43,6 +44,8 @@ def get_schedule(project_id: UUID, current_user: User = Depends(get_current_user
 def update_schedule(project_id: UUID, payload: ScheduleUpdate, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
+        if payload.enabled:
+            require_feature(entitlements(session, project.workspace_id), "schedules", "Weekly schedules")
         schedule = session.scalar(select(ScanSchedule).where(ScanSchedule.project_id == project.id))
         if not schedule:
             schedule = ScanSchedule(project_id=project.id, enabled=False, day_of_week=0, hour=9)

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
+from app.billing.plans import entitlements, require_feature
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -87,6 +88,7 @@ def _freeze(experiment_id: int, kind: str, metrics: MetricSnapshot) -> Experimen
 def create_experiment(project_id: UUID, payload: ExperimentCreate, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
+        require_feature(entitlements(session, project.workspace_id), "experiments", "Experiments")
         baseline = _latest_metrics(session, project.id)
         if not baseline:
             raise AppError(409, "NO_BASELINE_SCAN", "Run a scan first so the experiment has a baseline.")

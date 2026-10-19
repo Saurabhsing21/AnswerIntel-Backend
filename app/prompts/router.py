@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 
 from app.auth.dependencies import get_current_user
+from app.billing.plans import entitlements, require_active, require_room
 from app.common.access import get_owned_project
-from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.prompts.models import Prompt
@@ -35,10 +35,17 @@ def _active_count(session, project_id) -> int:
     ) or 0
 
 
+def _require_prompt_room(session, project) -> None:
+    ent = entitlements(session, project.workspace_id)
+    message = f"You can track up to {ent.active_prompts} active prompts."
+    require_room(ent, "active_prompts", _active_count(session, project.id), message, "PROMPT_LIMIT", 409)
+
+
 @router.post("/generate")
 def generate(project_id: UUID, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
+        require_active(entitlements(session, project.workspace_id))  # generation calls the LLM
         created = PromptDiscoveryService().generate_for_project(session, project)
         session.commit()
         prompts = session.scalars(select(Prompt).where(Prompt.project_id == project.id).order_by(Prompt.id)).all()
@@ -74,8 +81,7 @@ def add_prompt(project_id: UUID, request: PromptCreate, current_user: User = Dep
         )
         if duplicate:
             raise AppError(409, "PROMPT_DUPLICATE", "This prompt already exists.")
-        if _active_count(session, project.id) >= settings.max_active_prompts:
-            raise AppError(409, "PROMPT_LIMIT", f"You can track up to {settings.max_active_prompts} active prompts.")
+        _require_prompt_room(session, project)
         prompt = Prompt(project_id=project.id, text=text, category=request.category, intent=request.intent, source="user")
         session.add(prompt)
         session.commit()
@@ -97,8 +103,8 @@ def update_prompt(
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
         prompt = _owned_prompt(session, project.id, prompt_id)
-        if request.is_active and not prompt.is_active and _active_count(session, project.id) >= settings.max_active_prompts:
-            raise AppError(409, "PROMPT_LIMIT", f"You can track up to {settings.max_active_prompts} active prompts.")
+        if request.is_active and not prompt.is_active:
+            _require_prompt_room(session, project)
         for field in ("text", "category", "intent", "is_active"):
             value = getattr(request, field)
             if value is not None:

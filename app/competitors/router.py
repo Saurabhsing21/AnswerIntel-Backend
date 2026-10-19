@@ -9,7 +9,7 @@ from app.common.database import SessionLocal
 from app.competitors.models import Competitor
 from sqlalchemy import func
 
-from app.common.config import settings
+from app.billing.plans import entitlements, require_room
 from app.common.errors import AppError
 from app.competitors.schemas import CompetitorCreate, CompetitorUpdate
 from app.projects.models import Project
@@ -58,8 +58,8 @@ def add_competitor(
         count = session.scalar(
             select(func.count()).select_from(Competitor).where(Competitor.project_id == project.id)
         ) or 0
-        if count >= settings.max_competitors:
-            raise AppError(409, "COMPETITOR_LIMIT", f"You can track up to {settings.max_competitors} competitors.")
+        ent = entitlements(session, project.workspace_id)
+        require_room(ent, "competitors", count, f"You can track up to {ent.competitors} competitors.", "COMPETITOR_LIMIT", 409)
         duplicate = session.scalar(
             select(Competitor).where(Competitor.project_id == project.id, func.lower(Competitor.name) == request.name.strip().lower())
         )

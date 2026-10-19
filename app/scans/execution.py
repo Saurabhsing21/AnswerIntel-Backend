@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from app.analysis.base import AnalysisContext
 from app.analysis.persistence import save_analysis
 from app.analysis.service import ResponseAnalysisService
+from app.billing.plans import engines_for, entitlements
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.database import engine as db_engine
@@ -87,7 +88,7 @@ class ScanExecutionService:
             prompts = session.scalars(
                 select(ScanPrompt).where(ScanPrompt.scan_id == scan.id).order_by(ScanPrompt.id)
             ).all()
-            engines = self.model_registry.get_all()
+            engines = engines_for(self.model_registry.get_all(), entitlements(session, project.workspace_id))
 
             analysis_context = AnalysisContext(
                 brand_name=project.brand_name,

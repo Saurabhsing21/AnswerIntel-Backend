@@ -3,6 +3,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.billing.plans import engines_for, entitlements, require_active, require_room
+from app.billing.service import scans_today
 from app.common.config import settings
 from app.common.errors import AppError
 from app.projects.models import Project
@@ -25,6 +27,8 @@ class ScanService:
         self.provider = provider
 
     def start_scan(self, session: Session, project: Project) -> Scan:
+        ent = entitlements(session, project.workspace_id)
+        require_active(ent)
         running = session.scalar(
             select(Scan).where(Scan.project_id == project.id, Scan.status.in_(ACTIVE_STATUSES))
         )
@@ -37,6 +41,8 @@ class ScanService:
         ) or 0
         if recent >= settings.max_scans_per_day:
             raise AppError(429, "SCAN_LIMIT_REACHED", "Daily scan limit reached for this project. Try again tomorrow.")
+        message = f"Your plan includes {ent.scans_per_day} scans a day across the workspace. Try again tomorrow."
+        require_room(ent, "scans_per_day", scans_today(session, project.workspace_id), message, "SCAN_LIMIT_REACHED", 429)
         active = session.scalar(
             select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
         ) or 0
@@ -47,7 +53,7 @@ class ScanService:
         session.add(scan)
         session.flush()
         snapshots = self.prompt_discovery.snapshot_for_scan(session, project, scan.id)
-        scan.total_runs = len(snapshots) * len(self.model_registry.get_all())
+        scan.total_runs = len(snapshots) * len(engines_for(self.model_registry.get_all(), ent))
         return scan
 
     def run(self, scan_id: int) -> None:

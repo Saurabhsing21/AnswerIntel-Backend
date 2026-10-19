@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
+from app.billing.emails import send_trial_notices
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -58,6 +59,11 @@ def dispatch_scheduled_scans_task() -> list[int]:
 @celery_app.task(name="maintenance.purge_expired")
 def purge_expired_task() -> dict:
     return purge_expired(datetime.now(timezone.utc), settings.raw_response_retention_days)
+
+
+@celery_app.task(name="billing.trial_notices")
+def trial_notices_task() -> dict:
+    return send_trial_notices(datetime.now(timezone.utc))
 
 
 @celery_app.task(name="schedules.requeue_stuck")

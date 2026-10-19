@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from app.billing.plans import entitlements
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.projects.models import Project
@@ -31,7 +32,7 @@ def dispatch_due_scans(
     """Create and queue a scan for every enabled schedule whose slot has arrived and not yet fired.
     `project_ids` limits the run to those projects (the scheduler passes none and serves everyone).
 
-    A slot that cannot fire now (scan already running, no prompts, daily limit) is retried on the next
+    A slot that cannot fire now (scan already running, no prompts, daily limit, plan) is retried on the next
     run, because last_run_at only advances when a scan was actually created.
     """
     started: list[int] = []
@@ -43,8 +44,11 @@ def dispatch_due_scans(
             slot = latest_slot(now, schedule.day_of_week, schedule.hour)
             if slot < schedule.starts_at or (schedule.last_run_at and schedule.last_run_at >= slot):
                 continue
+            project = session.get(Project, schedule.project_id)
+            if not entitlements(session, project.workspace_id).schedules:
+                continue  # the workspace moved to a plan without schedules; the schedule waits for an upgrade
             try:
-                scan = ScanService().start_scan(session, session.get(Project, schedule.project_id))
+                scan = ScanService().start_scan(session, project)
             except AppError as exc:
                 session.rollback()
                 log.info("Scheduled scan for project %s skipped: %s", schedule.project_id, exc.code)

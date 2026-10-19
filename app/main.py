@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.router import router as api_router
+from app.billing.webhook import router as billing_webhook_router
 from app.common import observability
 from app.common.config import settings
 from app.common.errors import register_error_handlers
@@ -43,6 +44,7 @@ app.add_middleware(
 register_error_handlers(app)
 observability.install(app)
 app.include_router(api_router)
+app.include_router(billing_webhook_router)  # no user and no per-IP limit: Stripe signs every call
 
 
 @app.get("/health")

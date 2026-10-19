@@ -3,6 +3,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.billing.plans import entitlements
 from app.common.config import settings
 from app.common.llm import LLMError
 from app.competitors.models import Competitor
@@ -57,6 +58,7 @@ class PromptDiscoveryService:
         active = session.scalar(
             select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
         ) or 0
+        cap = entitlements(session, project.workspace_id).active_prompts
         created: list[Prompt] = []
         for candidate in candidates:
             key = candidate["text"].strip().lower()
@@ -71,7 +73,7 @@ class PromptDiscoveryService:
                 importance=candidate.get("importance"),
                 source=source,
                 # Respect the active-prompt cap; extras are kept but inactive for review.
-                is_active=active < settings.max_active_prompts,
+                is_active=active < cap,
             )
             active += int(prompt.is_active)
             session.add(prompt)

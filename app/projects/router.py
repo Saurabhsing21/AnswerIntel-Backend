@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
+from app.billing.plans import entitlements, require_room
+from app.billing.service import project_count
 from app.common.access import project_access
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -32,6 +34,8 @@ def create_project(
         workspace_id = session.scalar(memberships.order_by(WorkspaceMember.created_at).limit(1))
         if not workspace_id:
             raise AppError(404, "WORKSPACE_NOT_FOUND", "Workspace not found.")
+        ent = entitlements(session, workspace_id)
+        require_room(ent, "projects", project_count(session, workspace_id), f"Your plan includes {ent.projects} project(s).")
 
         project = Project(
             workspace_id=workspace_id,

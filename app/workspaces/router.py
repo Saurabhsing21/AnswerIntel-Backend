@@ -7,6 +7,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
+from app.billing.plans import entitlements, require_room
+from app.billing.service import seat_count, start_trial
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.users.models import User
@@ -62,6 +64,7 @@ def create_workspace(payload: WorkspaceCreate, current_user: User = Depends(get_
         workspace = Workspace(name=payload.name.strip())
         session.add(workspace)
         session.flush()
+        start_trial(session, workspace.id, current_user.id)
         session.add(WorkspaceMember(workspace_id=workspace.id, user_id=current_user.id, role="owner"))
         session.commit()
         return {"id": str(workspace.id), "name": workspace.name, "role": "owner"}
@@ -86,6 +89,8 @@ def add_member(workspace_id: UUID, payload: MemberAdd, current_user: User = Depe
         actor = _require_manager(session, workspace_id, current_user)
         if payload.role == "owner" and actor.role != "owner":
             raise AppError(403, "FORBIDDEN", "Only an owner can grant ownership.")
+        ent = entitlements(session, workspace_id)
+        require_room(ent, "seats", seat_count(session, workspace_id), f"Your plan includes {ent.seats} seats.")
         # Adds an existing account. Email invitations for people without an account are not built yet.
         user = session.scalar(select(User).where(func.lower(User.email) == str(payload.email).lower()))
         if not user:

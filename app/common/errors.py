@@ -6,15 +6,19 @@ from fastapi.responses import JSONResponse
 class AppError(Exception):
     """Domain error rendered as {"error": {"code", "message"}} (PRD section 85)."""
 
-    def __init__(self, status_code: int, code: str, message: str):
+    def __init__(self, status_code: int, code: str, message: str, limit: str | None = None):
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.limit = limit  # which plan limit was hit, so the UI can offer an upgrade
 
 
-def _body(code: str, message: str) -> dict:
+def _body(code: str, message: str, limit: str | None = None) -> dict:
     # "detail" kept for backwards compatibility with existing clients and tests.
-    return {"error": {"code": code, "message": message}, "detail": message}
+    error = {"code": code, "message": message}
+    if limit:
+        error["limit"] = limit
+    return {"error": error, "detail": message}
 
 
 _HTTP_CODES = {
@@ -30,7 +34,7 @@ _HTTP_CODES = {
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def app_error(_: Request, exc: AppError):
-        return JSONResponse(status_code=exc.status_code, content=_body(exc.code, exc.message))
+        return JSONResponse(status_code=exc.status_code, content=_body(exc.code, exc.message, exc.limit))
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException):
