@@ -15,10 +15,11 @@ class BrandVerdict(BaseModel):
     position: int | None = Field(default=None, ge=1, le=50)
     sentiment: Literal["positive", "neutral", "negative"] | None = None
     reason: str | None = Field(default=None, max_length=300)
+    evidence: str | None = Field(default=None, max_length=600)
 
 
 class AnalysisOutput(BaseModel):
-    brands: list[BrandVerdict] = Field(max_length=30)
+    brands: list[BrandVerdict] = Field(max_length=120)  # the brand plus up to 100 competitors on Pro
 
 
 SYSTEM = """You analyze an AI assistant's answer to a buyer's question for a brand-visibility tool.
@@ -29,7 +30,8 @@ For EACH brand listed, decide:
 - position: its rank in an explicit numbered/ranked list, otherwise null. Never invent a ranking.
 - sentiment: how the answer talks about that brand specifically (positive, neutral, negative), null if not mentioned.
 - reason: one short phrase on why it was or was not recommended.
-Return JSON: {"brands": [{"name", "mentioned", "recommended", "position", "sentiment", "reason"}]} covering exactly the listed brands."""
+- evidence: the single sentence from the answer that best supports the verdict, copied word for word; null if not mentioned.
+Return JSON: {"brands": [{"name", "mentioned", "recommended", "position", "sentiment", "reason", "evidence"}]} covering exactly the listed brands."""
 
 
 def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
@@ -53,6 +55,8 @@ def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
             "position": v.position if (mentioned and v) else None,
             "sentiment": (v.sentiment or "neutral") if (mentioned and v) else None,
             "reason": v.reason if v else None,
+            # Only keep a quote that really is in the answer (LLM output is untrusted).
+            "evidence": v.evidence.strip()[:400] if (mentioned and v and v.evidence and v.evidence.strip() in text) else None,
             "mention_count": len(name_pattern(name).findall(text)),
         }
 

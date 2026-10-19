@@ -40,7 +40,7 @@ class ResponseAnalysisService:
                 "brand_name": context.brand_name,
                 "mention_count": brand.get("mention_count", 0),
             },
-            "recommendation": {"recommended": brand["recommended"], "reason": brand.get("reason")},
+            "recommendation": {"recommended": brand["recommended"], "reason": brand.get("reason"), "evidence": brand.get("evidence")},
             "position": {"position": brand["position"]},
             "sentiment": {"sentiment": brand["sentiment"]},
             "competitors": [
@@ -48,6 +48,8 @@ class ResponseAnalysisService:
                     "competitor_id": c["id"],
                     "competitor_name": c["name"],
                     **{k: competitors[c["id"]][k] for k in ("mentioned", "recommended", "position", "sentiment")},
+                    "reason": competitors[c["id"]].get("reason"),
+                    "evidence": competitors[c["id"]].get("evidence"),
                 }
                 for c in context.competitors
             ],

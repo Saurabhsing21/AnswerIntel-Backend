@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -23,6 +23,8 @@ class Mention(Base):
     position: Mapped[int | None] = mapped_column(nullable=True)
     sentiment: Mapped[str | None] = mapped_column(String(50), nullable=True)
     reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # The sentence in the answer behind the verdict, shown highlighted so people see why AI picked a brand.
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     analysis_method: Mapped[str] = mapped_column(String(20), nullable=False, default="heuristic", server_default="heuristic")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -45,6 +47,8 @@ class CompetitorObservation(Base):
     recommended: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     position: Mapped[int | None] = mapped_column(nullable=True)
     sentiment: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

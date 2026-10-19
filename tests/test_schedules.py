@@ -50,7 +50,9 @@ def next_slot(after: datetime, day_of_week: int, hour: int) -> datetime:
 def test_schedule_api_defaults_validation_and_privacy(client):
     headers, project_id = project_with_prompts(client)
     default = client.get(f"{API}/projects/{project_id}/schedule", headers=headers).json()
-    assert default == {"enabled": False, "frequency": "weekly", "day_of_week": 0, "hour": 9, "last_run_at": None}
+    now = datetime.now(timezone.utc)  # every plan includes weekly tracking, so it starts on, at creation time
+    assert default["enabled"] is True and default["frequency"] == "weekly" and default["last_run_at"] is None
+    assert default["day_of_week"] == now.weekday() and default["hour"] in (now.hour, (now.hour - 1) % 24)
 
     saved = enable(client, headers, project_id, day_of_week=3, hour=14)
     assert saved.status_code == 200 and saved.json()["enabled"] is True

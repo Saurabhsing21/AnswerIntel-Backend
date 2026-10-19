@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.auth.router import router as auth_router
 from app.billing.router import router as billing_router
+from app.freecheck.router import router as free_check_router
 from app.common.ratelimit import limit_api
 from app.competitors.router import router as competitors_router
 from app.experiments.router import router as experiments_router
@@ -30,5 +31,6 @@ router.include_router(schedules_router)
 router.include_router(waitlist_router)
 router.include_router(workspaces_router)
 router.include_router(billing_router)
+router.include_router(free_check_router)
 router.include_router(reports_router)
 router.include_router(shared_reports_router)

@@ -3,6 +3,8 @@ import time
 from app.common.config import settings
 from app.common.llm import chat
 from app.providers.base import AIProvider, AIResponse, ProviderContext
+from app.providers.google_ai import ask_google_ai
+from app.providers.models import GOOGLE_AI_MODEL
 
 
 def extract_citations(data: dict) -> list[str]:
@@ -35,11 +37,17 @@ class OpenRouterProvider(AIProvider):
         model: str,
         context: ProviderContext | None = None,
     ) -> AIResponse:
+        if model == GOOGLE_AI_MODEL:
+            return ask_google_ai(prompt, context)
         started = time.monotonic()
+        messages = [{"role": "user", "content": prompt}]
+        if context and context.country:
+            messages.insert(0, {"role": "system", "content": f"The person asking is located in {context.country}."})
         data = chat(
             model,
-            [{"role": "user", "content": prompt}],
+            messages,
             timeout=settings.provider_timeout_seconds,
+            web_search=bool(context and context.web_search),
         )
         text = data["choices"][0]["message"].get("content") or ""
         return AIResponse(

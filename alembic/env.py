@@ -28,6 +28,7 @@ from app.waitlist.models import WaitlistSignup
 from app.auth.models import RefreshToken
 from app.workspaces.models import Workspace, WorkspaceMember
 from app.billing.models import Subscription, StripeEvent
+from app.freecheck.models import FreeCheck
 from app.prompts.models import Prompt
 config = context.config
 

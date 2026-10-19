@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +11,7 @@ from app.common.access import project_access
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.projects.models import Project
+from app.schedules.models import ScanSchedule
 from app.workspaces.models import WorkspaceMember
 from app.projects.schemas import ProjectCreate, ProjectUpdate
 from app.users.models import User
@@ -48,6 +50,10 @@ def create_project(
         )
 
         session.add(project)
+        session.flush()
+        # Every plan includes weekly tracking, so it starts switched on: same weekday and hour, from next week.
+        now = datetime.now(timezone.utc)
+        session.add(ScanSchedule(project_id=project.id, enabled=ent.schedules, day_of_week=now.weekday(), hour=now.hour, starts_at=now))
         session.commit()
         session.refresh(project)
 

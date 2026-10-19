@@ -16,6 +16,7 @@ from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.database import engine as db_engine
 from app.competitors.models import Competitor
+from app.metrics.alerts import alert_on_drop
 from app.metrics.service import compute_and_store
 from app.opportunities.service import generate_and_store
 from app.opportunities.site_audit import audit_site
@@ -100,6 +101,7 @@ class ScanExecutionService:
                 competitors=[c.name for c in competitors],
                 brand_website=project.website,
                 variation=scan.id,
+                country=project.country or "",
             )
 
             done = {
@@ -124,7 +126,7 @@ class ScanExecutionService:
                 for attempt in range(len(delays) + 1):
                     try:
                         with slots[engine.key]:
-                            return self.provider.ask(prompt_text, engine.model, provider_context)
+                            return self.provider.ask(prompt_text, engine.model, replace(provider_context, web_search=engine.web_search))
                     except Exception:
                         if attempt == len(delays):
                             raise
@@ -178,6 +180,10 @@ class ScanExecutionService:
                     log.exception("Site audit failed for scan %s", scan.id)
                     audit = None
                 generate_and_store(session, scan, project.brand_name, data["observations"], audit)
+                try:
+                    alert_on_drop(session, scan)
+                except Exception:  # an alert email must never fail a scan
+                    log.exception("Drop alert failed for scan %s", scan.id)
 
             if scan.failed_runs == 0:
                 scan.status = "completed"

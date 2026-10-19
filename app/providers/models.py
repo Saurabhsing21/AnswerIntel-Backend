@@ -11,22 +11,34 @@ DISPLAY_NAMES = {
 }
 
 
+GOOGLE_AI_MODEL = "dataforseo/google-ai-mode"
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     key: str
     model: str
     display_name: str
+    web_search: bool = False
 
 
 def parse_engines(spec: str) -> list[ModelConfig]:
+    searching = {k.strip() for k in settings.web_search_engines.split(",") if k.strip()}
     engines: list[ModelConfig] = []
     for part in spec.split(","):
         if "=" not in part:
             continue
         key, model = (s.strip() for s in part.split("=", 1))
         if key and model:
-            engines.append(ModelConfig(key=key, model=model, display_name=DISPLAY_NAMES.get(key, key.title())))
+            engines.append(ModelConfig(key=key, model=model, display_name=DISPLAY_NAMES.get(key, key.title()), web_search=key in searching))
     return engines
 
 
-V1_MODELS = parse_engines(settings.scan_engines)
+def configured_engines() -> list[ModelConfig]:
+    engines = parse_engines(settings.scan_engines)
+    if settings.google_ai_enabled:
+        engines.append(ModelConfig(key="google", model=GOOGLE_AI_MODEL, display_name=DISPLAY_NAMES["google"]))
+    return engines
+
+
+V1_MODELS = configured_engines()

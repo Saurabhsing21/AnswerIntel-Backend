@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 
+from app.metrics.stats import margin, significant
 from app.analysis.models import Citation, CompetitorObservation, Mention
 from app.auth.dependencies import get_current_user
 from app.common.access import get_owned_project
@@ -75,6 +76,14 @@ def build_dashboard(session, project) -> dict:
         k: (round(getattr(snapshot, k) - getattr(previous, k), 4)
             if previous and getattr(snapshot, k) is not None and getattr(previous, k) is not None else None)
         for k in METRIC_KEYS
+    }
+    # Rates are measured on a sample of answers; say how much they can move by chance.
+    rates = ("mention_rate", "recommendation_rate", "share_of_voice", "citation_rate")
+    visibility["margins"] = {k: margin(getattr(snapshot, k), snapshot.total_responses) for k in rates}
+    visibility["significant"] = {
+        k: significant(getattr(previous, k), previous.total_responses, getattr(snapshot, k), snapshot.total_responses)
+        if previous else None
+        for k in rates
     }
 
     comp_metrics = {m.competitor_id: m for m in session.scalars(select(CompetitorMetric).where(CompetitorMetric.scan_id == scan.id))}
@@ -195,11 +204,13 @@ def response_detail(project_id: UUID, response_id: int, current_user: User = Dep
             "brand": {
                 "name": project.brand_name, "mentioned": mention.mentioned, "recommended": mention.recommended,
                 "position": mention.position, "sentiment": mention.sentiment, "reason": mention.reason,
+                "evidence": mention.evidence,
                 "method": mention.analysis_method,
             } if mention else None,
             "competitors": [{
                 "id": o.competitor_id, "name": names.get(o.competitor_id), "mentioned": o.mentioned,
                 "recommended": o.recommended, "position": o.position, "sentiment": o.sentiment,
+                "reason": o.reason, "evidence": o.evidence,
             } for o in observations],
             "citations": [{"url": c.url, "domain": c.domain, "source_type": c.source_type,
                            "is_brand_owned": c.is_brand_owned, "competitor": names.get(c.competitor_id)} for c in citations],

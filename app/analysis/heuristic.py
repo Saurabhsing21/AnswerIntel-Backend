@@ -81,10 +81,14 @@ def analyze_name(text: str, name: str, aliases: list[str] | None = None) -> dict
     negative = sum(_words(s, NEGATIVE_WORDS) for s in own_sentences)
     sentiment = "positive" if positive > negative else "negative" if negative > positive else "neutral"
 
+    # The sentence that carries the verdict: a recommending one if there is one, else the first mention.
+    recommending = [s for s in own_sentences if any(cue in s.lower() for cue in RECOMMEND_CUES)]
+    evidence = (recommending or own_sentences or [None])[0]
     return {
         "mentioned": True,
         "recommended": recommended,
         "position": position,
         "sentiment": sentiment,
         "mention_count": hits,
+        "evidence": evidence.strip()[:400] if evidence else None,
     }

@@ -23,6 +23,17 @@ class Settings(BaseSettings):
         "perplexity=perplexity/sonar,"
         "gemini=google/gemini-3.1-flash-lite"
     )
+    # Engines that search the web before answering, as their consumer apps do (Perplexity always searches).
+    web_search_engines: str = "chatgpt,gemini"
+    # Google AI Mode answers through DataForSEO's SERP API. Empty login = the engine is off.
+    dataforseo_login: str = ""
+    dataforseo_password: str = ""
+
+    # Free website check: a few unbranded prompts on two engines (about $0.09 each). The daily cap bounds cost.
+    free_checks_per_day: int = 100
+    free_checks_per_client: int = 3
+    free_check_prompts: int = 5
+    free_check_engines: str = "chatgpt,perplexity"
     prompt_model: str = "openai/gpt-5.4-mini"  # one call per project, so quality wins here
     analysis_model: str = "openai/gpt-5.4-nano"  # runs on every answer
     provider_timeout_seconds: float = 90
@@ -80,6 +91,10 @@ class Settings(BaseSettings):
     @property
     def retry_delays(self) -> list[float]:
         return [float(d) for d in self.provider_retry_delays.split(",") if d.strip()]
+
+    @property
+    def google_ai_enabled(self) -> bool:
+        return bool(self.dataforseo_login.strip() and self.dataforseo_password.strip())
 
     @property
     def billing_enabled(self) -> bool:

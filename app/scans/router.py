@@ -1,10 +1,16 @@
 from uuid import UUID
 
+import csv
+import io
+
 from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi.responses import Response
 from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
+from app.analysis.models import Citation, CompetitorObservation, Mention
 from app.common.access import get_owned_project
+from app.competitors.models import Competitor
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.prompts.models import ScanPrompt
@@ -137,3 +143,44 @@ def list_scan_responses(
             }
             for record in records
         ]
+
+
+CSV_COLUMNS = ["prompt", "category", "engine", "mentioned", "recommended", "position", "sentiment", "reason",
+               "evidence", "competitors_recommended", "citations"]
+
+
+@router.get("/{scan_id}/export.csv")
+def export_scan_csv(project_id: UUID, scan_id: int, current_user: User = Depends(get_current_user)):
+    """Every answer of a scan as one spreadsheet row: the raw material behind the dashboard."""
+    with SessionLocal() as session:
+        scan = get_owned_scan(session, project_id, scan_id, current_user.id)
+        names = {c.id: c.name for c in session.scalars(select(Competitor).where(Competitor.project_id == scan.project_id))}
+        rows = session.execute(
+            select(AIResponseRecord, ScanPrompt, Mention)
+            .join(ScanPrompt, ScanPrompt.id == AIResponseRecord.scan_prompt_id)
+            .outerjoin(Mention, Mention.ai_response_id == AIResponseRecord.id)
+            .where(AIResponseRecord.scan_id == scan.id)
+            .order_by(ScanPrompt.id, AIResponseRecord.engine)
+        ).all()
+        ids = [r.AIResponseRecord.id for r in rows]
+        picks: dict[int, list[str]] = {}
+        for o in session.scalars(select(CompetitorObservation).where(CompetitorObservation.ai_response_id.in_(ids), CompetitorObservation.recommended)):
+            picks.setdefault(o.ai_response_id, []).append(names.get(o.competitor_id, ""))
+        sources: dict[int, list[str]] = {}
+        for c in session.scalars(select(Citation).where(Citation.ai_response_id.in_(ids))):
+            sources.setdefault(c.ai_response_id, []).append(c.url)
+
+        out = io.StringIO()
+        writer = csv.writer(out)
+        writer.writerow(CSV_COLUMNS)
+        for record, prompt, mention in rows:
+            writer.writerow([
+                prompt.text, prompt.category, record.engine,
+                mention.mentioned if mention else "", mention.recommended if mention else "",
+                mention.position if mention and mention.position else "", mention.sentiment if mention else "",
+                mention.reason if mention else "", mention.evidence if mention else "",
+                "; ".join(picks.get(record.id, [])), " ".join(sources.get(record.id, [])),
+            ])
+        filename = f"seenlens-scan-{scan.id}.csv"
+        return Response(out.getvalue(), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{filename}"'})

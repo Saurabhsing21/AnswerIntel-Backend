@@ -40,19 +40,20 @@ class Plan:
     price_yearly: int = 0
 
 
-# Same mechanism as Peec AI (one prompt pool, automatic tracking, a monthly answer cap) with twice their prompts
-# and projects, tracked weekly. answers_per_month = prompts x 3 engines x ~4.3 weekly runs, so a workspace that
-# uses everything costs us about 30% of its price. Yearly = 20% off, so it is a whole number a month.
-STARTER = Plan("starter", "Starter", projects=2, active_prompts=100, answers_per_month=1300, competitors=20,
+# Same mechanism as Peec AI: one prompt pool, automatic weekly tracking, a monthly answer cap. Answers are collected
+# with web search on (as the consumer apps do) on up to 4 engines, about $0.0103 each including analysis, so
+# answers_per_month ~ prompts x 4 engines x 4.3 weekly runs keeps full use at about 30% of the price.
+# Yearly = 20% off, so it is a whole number a month.
+STARTER = Plan("starter", "Starter", projects=2, active_prompts=30, answers_per_month=520, competitors=20,
                engines=None, scans_per_day=2, seats=None, retention_days=183, schedules=True, experiments=False,
                price_monthly=20, price_yearly=192)
-GROWTH = Plan("growth", "Growth", projects=4, active_prompts=300, answers_per_month=3900, competitors=50,
+GROWTH = Plan("growth", "Growth", projects=4, active_prompts=80, answers_per_month=1400, competitors=50,
               engines=None, scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True,
               price_monthly=50, price_yearly=480)
-PRO = Plan("pro", "Pro", projects=10, active_prompts=700, answers_per_month=9000, competitors=100,
+PRO = Plan("pro", "Pro", projects=10, active_prompts=160, answers_per_month=2800, competitors=100,
            engines=None, scans_per_day=10, seats=None, retention_days=730, schedules=True, experiments=True,
            price_monthly=100, price_yearly=960)
-TRIAL = Plan("trial", "Trial", projects=4, active_prompts=300, answers_per_month=3900, competitors=50, engines=None,
+TRIAL = Plan("trial", "Trial", projects=4, active_prompts=80, answers_per_month=1400, competitors=50, engines=None,
              scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True)  # legacy, ends on its own
 # A workspace that has not paid yet: nothing allowed. Retention stays at the ceiling so nothing is purged early.
 NONE = Plan("none", "No plan", projects=0, active_prompts=0, answers_per_month=0, competitors=0, engines=0,

@@ -21,6 +21,7 @@ def save_analysis(
             position=result["position"]["position"],
             sentiment=result["sentiment"]["sentiment"],
             reason=result["recommendation"].get("reason"),
+            evidence=result["recommendation"].get("evidence"),
             analysis_method=result.get("method", "heuristic"),
         )
     )
@@ -33,6 +34,8 @@ def save_analysis(
                 recommended=competitor.get("recommended", False),
                 position=competitor.get("position"),
                 sentiment=competitor.get("sentiment"),
+                reason=(competitor.get("reason") or "")[:300] or None,
+                evidence=competitor.get("evidence"),
             )
         )
     for citation in result["citations"]:

@@ -179,7 +179,7 @@ def test_checkout_returns_a_stripe_url_and_rejects_offsite_returns(client, fake_
     assert response.status_code == 200 and response.json()["url"] == "https://checkout.stripe.test/session"
     sent = fake_stripe.checkouts[-1]
     assert sent["price"] == "price_pro_y" and sent["workspace_id"] == workspace_id
-    assert sent["success_url"] == "http://localhost:3000/projects/abc/billing?checkout=success"
+    assert sent["success_url"] == f"{settings.app_base_url}/projects/abc/billing?checkout=success"
     assert billing(client, headers, workspace_id).json()["has_billing_account"] is True
 
     for bad in ("//evil.com", "https://evil.com", "evil.com"):
@@ -344,30 +344,30 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
     assert scan["total_runs"] == len(V1_MODELS)  # every engine on every plan
 
-    with SessionLocal() as session:  # one more scan today fills Starter's two; 99 more prompts fill 100
+    with SessionLocal() as session:  # one more scan today fills Starter's two; 29 more prompts fill 30
         session.add(Scan(project_id=pid, status="completed"))
-        session.add_all([Prompt(project_id=pid, text=f"prompt {i}", category="CATEGORY", intent="DISCOVERY", source="user") for i in range(99)])
+        session.add_all([Prompt(project_id=pid, text=f"prompt {i}", category="CATEGORY", intent="DISCOVERY", source="user") for i in range(29)])
         session.commit()
     assert error(client.post(f"{API}/projects/{project_id}/scans", headers=headers)) == (429, "SCAN_LIMIT_REACHED", "scans_per_day")
     extra = client.post(f"{API}/projects/{project_id}/prompts", json={**prompt, "text": "one too many"}, headers=headers)
     assert error(extra) == (409, "PROMPT_LIMIT", "active_prompts")
 
     usage = billing(client, headers, workspace_id).json()["usage"]
-    assert usage["projects"] == 2 and usage["seats"] == 6 and usage["scans_today"] == 2 and usage["active_prompts"] == 100
+    assert usage["projects"] == 2 and usage["seats"] == 6 and usage["scans_today"] == 2 and usage["active_prompts"] == 30
     first = next(p for p in usage["per_project"] if p["id"] == project_id)
-    assert first["competitors"] == 20 and first["active_prompts"] == 100
+    assert first["competitors"] == 20 and first["active_prompts"] == 30
 
 
 def test_monthly_answer_cap_refuses_a_scan_that_would_go_over(client, fake_stripe):
     headers = signup(client, "answers")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id)  # Starter: 1,300 answers in any 30 days
+    subscribe(client, fake_stripe, workspace_id)  # Starter: 520 answers in any 30 days
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
     needed = len(V1_MODELS)  # one prompt on every engine
     with SessionLocal() as session:  # older scans (not today, so the daily guard stays out of it)
-        old = Scan(project_id=uuid.UUID(project_id), status="completed", total_runs=1300 - needed + 1,
+        old = Scan(project_id=uuid.UUID(project_id), status="completed", total_runs=520 - needed + 1,
                    created_at=datetime.now(timezone.utc) - timedelta(days=3))
         session.add(old)
         session.commit()
@@ -375,7 +375,7 @@ def test_monthly_answer_cap_refuses_a_scan_that_would_go_over(client, fake_strip
 
     blocked = client.post(f"{API}/projects/{project_id}/scans", headers=headers)
     assert blocked.status_code == 402 and blocked.json()["error"]["limit"] == "answers_per_month"
-    assert billing(client, headers, workspace_id).json()["usage"]["answers_30_days"] == 1300 - needed + 1
+    assert billing(client, headers, workspace_id).json()["usage"]["answers_30_days"] == 520 - needed + 1
 
     with SessionLocal() as session:  # a month later those answers no longer count
         session.execute(update(Scan).where(Scan.id == old_id).values(created_at=datetime.now(timezone.utc) - timedelta(days=31)))
@@ -388,11 +388,11 @@ def test_prompt_pool_is_shared_by_every_project(client, fake_stripe):
     headers = signup(client, "pool")
     workspace_id = workspace_of(client, headers)
     first = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id)  # Starter: 100 prompts in total
+    subscribe(client, fake_stripe, workspace_id)  # Starter: 30 prompts in total
     second = client.post(f"{API}/projects", json=PROJECT, headers=headers).json()["id"]
     with SessionLocal() as session:
         session.add_all([Prompt(project_id=uuid.UUID(first), text=f"prompt {i}", category="CATEGORY",
-                                intent="DISCOVERY", source="user") for i in range(100)])
+                                intent="DISCOVERY", source="user") for i in range(30)])
         session.commit()
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     refused = client.post(f"{API}/projects/{second}/prompts", json=prompt, headers=headers)

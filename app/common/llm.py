@@ -17,6 +17,7 @@ def chat(
     *,
     json_mode: bool = False,
     timeout: float | None = None,
+    web_search: bool = False,
 ) -> dict:
     """One OpenRouter chat completion with retry on rate limits and server errors."""
     if not settings.ai_enabled:
@@ -25,6 +26,8 @@ def chat(
     payload: dict = {"model": model, "messages": messages}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+    if web_search:  # the model's own search (what the consumer app uses), billed per request by OpenRouter
+        payload["plugins"] = [{"id": "web", "engine": "native"}]
 
     headers = {
         "Authorization": f"Bearer {settings.openrouter_api_key}",

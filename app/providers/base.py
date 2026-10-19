@@ -10,6 +10,10 @@ class ProviderContext:
     brand_website: str = ""
     # Varies simulated answers between scans; real engines ignore it.
     variation: int = 0
+    # Where the buyer is (the project's market): real answers and cited sources differ by country.
+    country: str = ""
+    # Search the web like the consumer app does, so answers match what people actually see.
+    web_search: bool = False
 
 
 @dataclass

@@ -6,10 +6,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
+from app.billing.plans import entitlements, require_active
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.metrics.models import MetricSnapshot
+from app.opportunities.draft import draft_for
 from app.opportunities.models import Opportunity
 from app.opportunities.service import AREAS, IMPACT_ORDER
 from app.users.models import User
@@ -81,3 +83,17 @@ def update_opportunity(
         session.commit()
         session.refresh(opportunity)
         return serialize(opportunity)
+
+
+@router.post("/{opportunity_id}/draft")
+def draft_opportunity(project_id: UUID, opportunity_id: int, current_user: User = Depends(get_current_user)):
+    """A first draft (page, FAQ, comparison or pitch) that carries out the recommended action. Not stored."""
+    with SessionLocal() as session:
+        project = get_owned_project(session, project_id, current_user.id)
+        require_active(entitlements(session, project.workspace_id))  # calls the LLM
+        opportunity = session.scalar(
+            select(Opportunity).where(Opportunity.id == opportunity_id, Opportunity.project_id == project.id)
+        )
+        if not opportunity:
+            raise AppError(404, "OPPORTUNITY_NOT_FOUND", "Opportunity not found.")
+        return draft_for(project, opportunity)

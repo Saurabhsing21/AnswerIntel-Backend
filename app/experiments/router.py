@@ -13,6 +13,7 @@ from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.experiments.models import Experiment, ExperimentSnapshot
 from app.metrics.models import MetricSnapshot
+from app.metrics.stats import significant
 from app.users.models import User
 
 router = APIRouter(prefix="/projects/{project_id}/experiments", tags=["Experiments"])
@@ -31,14 +32,20 @@ def _snapshot(s: ExperimentSnapshot | None) -> dict | None:
     return {"scan_id": s.scan_id, "created_at": s.created_at, **{k: getattr(s, k) for k in METRICS}}
 
 
-def _comparison(baseline: dict | None, after: dict | None) -> dict | None:
+def _comparison(baseline: dict | None, after: dict | None, sizes: dict[int, int]) -> dict | None:
+    """`significant` says whether a change is bigger than run-to-run noise, so a lucky scan is not called a win."""
     if not baseline or not after:
         return None
+    n_before, n_after = sizes.get(baseline["scan_id"], 0), sizes.get(after["scan_id"], 0)
     result = {}
     for key in METRICS:
         before, now = baseline[key], after[key]
         delta = round(now - before, 4) if before is not None and now is not None else None
-        result[key] = {"before": before, "after": now, "delta": delta}
+        rate = key != "average_position"  # position is a rank, not a share of answers
+        result[key] = {
+            "before": before, "after": now, "delta": delta,
+            "significant": significant(before, n_before, now, n_after) if rate else None,
+        }
     return result
 
 
@@ -48,6 +55,10 @@ def serialize(session: Session, experiment: Experiment) -> dict:
         for s in session.scalars(select(ExperimentSnapshot).where(ExperimentSnapshot.experiment_id == experiment.id))
     }
     baseline, after = _snapshot(snapshots.get("baseline")), _snapshot(snapshots.get("after"))
+    scan_ids = [s["scan_id"] for s in (baseline, after) if s]
+    sizes = dict(session.execute(
+        select(MetricSnapshot.scan_id, MetricSnapshot.total_responses).where(MetricSnapshot.scan_id.in_(scan_ids))
+    ).all()) if scan_ids else {}
     return {
         "id": experiment.id,
         "project_id": str(experiment.project_id),
@@ -58,7 +69,7 @@ def serialize(session: Session, experiment: Experiment) -> dict:
         "ended_at": experiment.ended_at,
         "baseline": baseline,
         "after": after,
-        "comparison": _comparison(baseline, after),
+        "comparison": _comparison(baseline, after, sizes),
     }
 
 
