@@ -39,12 +39,13 @@ class Plan:
     price_yearly: int = 0
 
 
-STARTER = Plan("starter", "Starter", projects=1, active_prompts=25, competitors=3, engines=2, scans_per_day=3,
-               seats=2, retention_days=183, schedules=False, experiments=False, price_monthly=20, price_yearly=200)
-GROWTH = Plan("growth", "Growth", projects=3, active_prompts=75, competitors=8, engines=None, scans_per_day=10,
-              seats=5, retention_days=365, schedules=True, experiments=True, price_monthly=50, price_yearly=500)
-PRO = Plan("pro", "Pro", projects=10, active_prompts=200, competitors=15, engines=None, scans_per_day=30,
-           seats=15, retention_days=730, schedules=True, experiments=True, price_monthly=100, price_yearly=1000)
+# Roughly twice the usage of the comparable Peec AI tier. Yearly = 20% off, so it is a whole number a month.
+STARTER = Plan("starter", "Starter", projects=2, active_prompts=100, competitors=20, engines=None, scans_per_day=2,
+               seats=5, retention_days=183, schedules=True, experiments=False, price_monthly=20, price_yearly=192)
+GROWTH = Plan("growth", "Growth", projects=4, active_prompts=300, competitors=50, engines=None, scans_per_day=4,
+              seats=15, retention_days=365, schedules=True, experiments=True, price_monthly=50, price_yearly=480)
+PRO = Plan("pro", "Pro", projects=10, active_prompts=700, competitors=100, engines=None, scans_per_day=10,
+           seats=50, retention_days=730, schedules=True, experiments=True, price_monthly=100, price_yearly=960)
 TRIAL = Plan("trial", "Trial", projects=5, active_prompts=100, competitors=10, engines=None, scans_per_day=20,
              seats=10, retention_days=365, schedules=True, experiments=True)  # legacy: Pro limits, ends on its own
 # A workspace that has not paid yet: nothing allowed. Retention stays at the ceiling so nothing is purged early.

@@ -41,8 +41,8 @@ class Settings(BaseSettings):
     raw_response_retention_days: int = 730  # ceiling; each plan keeps less or equal (PRD 88). Aggregates are kept
 
     # Hard ceilings per project. Each workspace's plan sets its own limits below these (app/billing/plans.py).
-    max_competitors: int = 15
-    max_active_prompts: int = 200
+    max_competitors: int = 100
+    max_active_prompts: int = 700
 
     cors_origins: str = "http://localhost:3000"
 

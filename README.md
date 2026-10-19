@@ -94,7 +94,7 @@ runs out on its own. Limits live in `app/billing/plans.py`. Without `STRIPE_SECR
 Setup in Stripe test mode:
 
 1. In the Stripe dashboard (test mode) create three products, Starter, Growth and Pro, each with a monthly and a
-   yearly recurring USD price ($20/$200, $50/$500, $100/$1000). Put the six price ids in
+   yearly recurring USD price ($20/$192, $50/$480, $100/$960). Put the six price ids in
    `STRIPE_PRICE_{STARTER,GROWTH,PRO}_{MONTHLY,YEARLY}` and the secret key (`sk_test_...`) in `STRIPE_SECRET_KEY`.
 2. Turn on the Customer Portal (Settings -> Billing -> Customer portal): allow updating payment methods,
    viewing invoices, cancelling, and switching between the six prices.

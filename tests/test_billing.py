@@ -15,6 +15,7 @@ from app.billing.emails import send_trial_notices
 from app.billing.models import StripeEvent, Subscription
 from app.common.config import settings
 from app.common.database import SessionLocal
+from app.competitors.models import Competitor
 from app.prompts.models import Prompt
 from app.providers.registry import V1_MODELS
 from app.providers.response_model import AIResponseRecord
@@ -316,46 +317,46 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     project_id = make_project(client, headers)  # two competitors
     subscribe(client, fake_stripe, workspace_id)
     assert billing(client, headers, workspace_id).json()["plan"] == "starter"
+    pid = uuid.UUID(project_id)
 
     def error(response):
         return response.status_code, response.json()["error"]["code"], response.json()["error"].get("limit")
 
+    assert client.post(f"{API}/projects", json=PROJECT, headers=headers).status_code == 200  # 2 projects
     assert error(client.post(f"{API}/projects", json=PROJECT, headers=headers)) == (402, "PLAN_LIMIT", "projects")
 
-    third = client.post(f"{API}/projects/{project_id}/competitors", json={"name": "Orbit", "website": "https://orbit.io"}, headers=headers)
-    assert third.status_code == 200
-    fourth = client.post(f"{API}/projects/{project_id}/competitors", json={"name": "Nimbus", "website": "https://nimbus.io"}, headers=headers)
-    assert error(fourth) == (409, "COMPETITOR_LIMIT", "competitors")
+    with SessionLocal() as session:  # 18 more competitors fill Starter's 20
+        session.add_all([Competitor(project_id=pid, name=f"Rival {i}", website=f"https://rival{i}.io") for i in range(18)])
+        session.commit()
+    extra = client.post(f"{API}/projects/{project_id}/competitors", json={"name": "Nimbus", "website": "https://nimbus.io"}, headers=headers)
+    assert error(extra) == (409, "COMPETITOR_LIMIT", "competitors")
 
-    schedule = client.put(f"{API}/projects/{project_id}/schedule", json={"enabled": True}, headers=headers)
-    assert error(schedule) == (402, "PLAN_LIMIT", "schedules")
-    assert client.put(f"{API}/projects/{project_id}/schedule", json={"hour": 10}, headers=headers).status_code == 200
+    # Weekly scans are on every plan; experiments start at Growth.
+    assert client.put(f"{API}/projects/{project_id}/schedule", json={"enabled": True}, headers=headers).status_code == 200
     experiment = client.post(f"{API}/projects/{project_id}/experiments", json={"name": "FAQ page"}, headers=headers)
     assert error(experiment) == (402, "PLAN_LIMIT", "experiments")
 
-    assert add_member(client, headers, workspace_id).status_code == 200  # owner + 1 = Starter's 2 seats
+    for _ in range(4):  # owner + 4 = Starter's 5 seats
+        assert add_member(client, headers, workspace_id).status_code == 200
     assert error(add_member(client, headers, workspace_id)) == (402, "PLAN_LIMIT", "seats")
 
-    # Starter scans use the first two engines only.
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     assert client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers).status_code == 200
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
-    assert scan["total_runs"] == min(2, len(V1_MODELS))
-    finished = client.get(f"{API}/projects/{project_id}/scans/{scan['id']}", headers=headers).json()
-    assert finished["total_runs"] == min(2, len(V1_MODELS))
+    assert scan["total_runs"] == len(V1_MODELS)  # every engine on every plan
 
-    with SessionLocal() as session:  # two more scans today fill the workspace's three; 24 more prompts fill 25
-        session.add_all([Scan(project_id=uuid.UUID(project_id), status="completed") for _ in range(2)])
-        session.add_all([Prompt(project_id=uuid.UUID(project_id), text=f"prompt {i}", category="CATEGORY",
-                                intent="DISCOVERY", source="user") for i in range(24)])
+    with SessionLocal() as session:  # one more scan today fills Starter's two; 99 more prompts fill 100
+        session.add(Scan(project_id=pid, status="completed"))
+        session.add_all([Prompt(project_id=pid, text=f"prompt {i}", category="CATEGORY", intent="DISCOVERY", source="user") for i in range(99)])
         session.commit()
     assert error(client.post(f"{API}/projects/{project_id}/scans", headers=headers)) == (429, "SCAN_LIMIT_REACHED", "scans_per_day")
     extra = client.post(f"{API}/projects/{project_id}/prompts", json={**prompt, "text": "one too many"}, headers=headers)
     assert error(extra) == (409, "PROMPT_LIMIT", "active_prompts")
 
     usage = billing(client, headers, workspace_id).json()["usage"]
-    assert usage["projects"] == 1 and usage["seats"] == 2 and usage["scans_today"] == 3
-    assert usage["per_project"][0]["competitors"] == 3 and usage["per_project"][0]["active_prompts"] == 25
+    assert usage["projects"] == 2 and usage["seats"] == 5 and usage["scans_today"] == 2
+    first = next(p for p in usage["per_project"] if p["id"] == project_id)
+    assert first["competitors"] == 20 and first["active_prompts"] == 100
 
 
 def test_growth_checkout_and_limits(client, fake_stripe):
@@ -365,7 +366,7 @@ def test_growth_checkout_and_limits(client, fake_stripe):
     assert response.status_code == 200 and fake_stripe.checkouts[-1]["price"] == "price_growth_y"
     subscribe(client, fake_stripe, workspace_id, plan_price="price_growth_m")
     body = billing(client, headers, workspace_id).json()
-    assert body["plan"] == "growth" and body["limits"]["projects"] == 3 and body["limits"]["schedules"] is True
+    assert body["plan"] == "growth" and body["limits"]["projects"] == 4 and body["limits"]["schedules"] is True
 
 
 def test_pro_allows_what_starter_does_not(client, fake_stripe):
