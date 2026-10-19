@@ -2461,13 +2461,19 @@ Plans (limits in `app/billing/plans.py`, prices in Stripe):
 None     a new workspace before it pays: nothing allowed. There is no free plan or free trial;
          people pick a plan on the website, sign up and pay in Stripe Checkout.
 Trial    legacy only: workspaces that predate billing got 14 days with Pro limits, once.
-Starter  $20/mo or $192/yr: 2 projects, 100 active prompts, 20 competitors, all engines,
-         2 scans/day + weekly auto-scan, 5 seats, 6-month retention, no experiments.
-Growth   $50/mo or $480/yr: 4 projects, 300 active prompts, 50 competitors, all engines,
-         4 scans/day + weekly auto-scan, 15 seats, 12-month retention, experiments.
-Pro      $100/mo or $960/yr: 10 projects, 700 active prompts, 100 competitors, all engines,
-         10 scans/day + weekly auto-scan, 50 seats, 24-month retention, experiments.
-         (About twice the usage of the comparable Peec AI tier; yearly is 20% off.)
+Starter  $20/mo or $192/yr: 100 prompts (one pool for the workspace), 1,300 AI answers a month,
+         2 projects, 20 competitors per project, all engines, weekly tracking, 2 on-demand scans/day,
+         unlimited seats, 6-month retention, no experiments.
+Growth   $50/mo or $480/yr: 300 prompts, 3,900 AI answers a month, 4 projects, 50 competitors,
+         all engines, weekly tracking, 4 scans/day, unlimited seats, 12-month retention, experiments.
+Pro      $100/mo or $960/yr: 700 prompts, 9,000 AI answers a month, 10 projects, 100 competitors,
+         all engines, weekly tracking, 10 scans/day, unlimited seats, 24-month retention, experiments.
+
+Same mechanism as Peec AI (prompt pool, automatic tracking, monthly answer cap), with twice their prompts and
+projects, tracked weekly instead of daily. An AI answer is one prompt asked to one engine; every scan (scheduled
+or on demand) uses prompts x engines answers from the allowance of the last 30 days, and a scan that would go over
+it is refused. The cap is priced for the small models in SCAN_ENGINES/ANALYSIS_MODEL (~$0.0036 per answer with
+analysis), so a workspace using its full allowance costs about 30% of its price.
 Lapsed   canceled, unpaid, trial over, or past due beyond a 7-day grace: read-only
          (view and export; no scans, prompts, competitors, projects or invites).
 ```

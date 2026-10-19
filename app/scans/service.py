@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.billing.plans import engines_for, entitlements, require_active, require_room
-from app.billing.service import scans_today
+from app.billing.service import answers_used, scans_today
 from app.common.config import settings
 from app.common.errors import AppError
 from app.projects.models import Project
@@ -48,12 +48,23 @@ class ScanService:
         ) or 0
         if not active:
             raise AppError(409, "NO_ACTIVE_PROMPTS", "Generate or add prompts before starting a scan.")
+        # The monthly answer cap is what bounds model cost: refuse a scan that would go over it.
+        engines = engines_for(self.model_registry.get_all(), ent)
+        needed = active * len(engines)
+        left = max(0, ent.answers_per_month - answers_used(session, project.workspace_id))
+        if needed > left:
+            raise AppError(
+                402, "PLAN_LIMIT",
+                f"This scan needs {needed} AI answers and {left} are left of your {ent.answers_per_month} for the last "
+                "30 days. Switch off some prompts or wait for older scans to roll off.",
+                limit="answers_per_month",
+            )
 
         scan = Scan(project_id=project.id, status="queued")
         session.add(scan)
         session.flush()
         snapshots = self.prompt_discovery.snapshot_for_scan(session, project, scan.id)
-        scan.total_runs = len(snapshots) * len(engines_for(self.model_registry.get_all(), ent))
+        scan.total_runs = len(snapshots) * len(engines)
         return scan
 
     def run(self, scan_id: int) -> None:

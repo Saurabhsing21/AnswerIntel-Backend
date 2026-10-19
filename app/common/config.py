@@ -17,13 +17,14 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     # engine_key=openrouter/model-slug, comma separated. Keys map to display names.
+    # Small models on purpose: every plan's monthly answer cap is priced for them (app/billing/plans.py).
     scan_engines: str = (
-        "chatgpt=openai/gpt-5.4-mini,"
+        "chatgpt=openai/gpt-5.4-nano,"
         "perplexity=perplexity/sonar,"
-        "gemini=google/gemini-3.8-flash"
+        "gemini=google/gemini-3.1-flash-lite"
     )
-    prompt_model: str = "openai/gpt-5.4-mini"
-    analysis_model: str = "openai/gpt-5.4-mini"
+    prompt_model: str = "openai/gpt-5.4-mini"  # one call per project, so quality wins here
+    analysis_model: str = "openai/gpt-5.4-nano"  # runs on every answer
     provider_timeout_seconds: float = 90
     provider_max_retries: int = 2
     scan_concurrency: int = 4

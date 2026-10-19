@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.billing.plans import entitlements
+from app.billing.service import active_prompts
 from app.common.config import settings
 from app.common.llm import LLMError
 from app.competitors.models import Competitor
@@ -58,7 +59,8 @@ class PromptDiscoveryService:
         active = session.scalar(
             select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
         ) or 0
-        cap = entitlements(session, project.workspace_id).active_prompts
+        pool = entitlements(session, project.workspace_id).active_prompts
+        pool_used = active_prompts(session, project.workspace_id)  # the plan's pool is shared by every project
         created: list[Prompt] = []
         for candidate in candidates:
             key = candidate["text"].strip().lower()
@@ -72,10 +74,11 @@ class PromptDiscoveryService:
                 intent=candidate["intent"],
                 importance=candidate.get("importance"),
                 source=source,
-                # Respect the active-prompt cap; extras are kept but inactive for review.
-                is_active=active < cap,
+                # Respect the plan's prompt pool and the per-project ceiling; extras are kept inactive for review.
+                is_active=pool_used < pool and active < settings.max_active_prompts,
             )
             active += int(prompt.is_active)
+            pool_used += int(prompt.is_active)
             session.add(prompt)
             created.append(prompt)
         session.flush()

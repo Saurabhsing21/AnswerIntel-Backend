@@ -336,9 +336,8 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     experiment = client.post(f"{API}/projects/{project_id}/experiments", json={"name": "FAQ page"}, headers=headers)
     assert error(experiment) == (402, "PLAN_LIMIT", "experiments")
 
-    for _ in range(4):  # owner + 4 = Starter's 5 seats
+    for _ in range(5):  # seats are unlimited on every plan
         assert add_member(client, headers, workspace_id).status_code == 200
-    assert error(add_member(client, headers, workspace_id)) == (402, "PLAN_LIMIT", "seats")
 
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     assert client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers).status_code == 200
@@ -354,9 +353,52 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     assert error(extra) == (409, "PROMPT_LIMIT", "active_prompts")
 
     usage = billing(client, headers, workspace_id).json()["usage"]
-    assert usage["projects"] == 2 and usage["seats"] == 5 and usage["scans_today"] == 2
+    assert usage["projects"] == 2 and usage["seats"] == 6 and usage["scans_today"] == 2 and usage["active_prompts"] == 100
     first = next(p for p in usage["per_project"] if p["id"] == project_id)
     assert first["competitors"] == 20 and first["active_prompts"] == 100
+
+
+def test_monthly_answer_cap_refuses_a_scan_that_would_go_over(client, fake_stripe):
+    headers = signup(client, "answers")
+    workspace_id = workspace_of(client, headers)
+    project_id = make_project(client, headers)
+    subscribe(client, fake_stripe, workspace_id)  # Starter: 1,300 answers in any 30 days
+    prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
+    client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
+    needed = len(V1_MODELS)  # one prompt on every engine
+    with SessionLocal() as session:  # older scans (not today, so the daily guard stays out of it)
+        old = Scan(project_id=uuid.UUID(project_id), status="completed", total_runs=1300 - needed + 1,
+                   created_at=datetime.now(timezone.utc) - timedelta(days=3))
+        session.add(old)
+        session.commit()
+        old_id = old.id
+
+    blocked = client.post(f"{API}/projects/{project_id}/scans", headers=headers)
+    assert blocked.status_code == 402 and blocked.json()["error"]["limit"] == "answers_per_month"
+    assert billing(client, headers, workspace_id).json()["usage"]["answers_30_days"] == 1300 - needed + 1
+
+    with SessionLocal() as session:  # a month later those answers no longer count
+        session.execute(update(Scan).where(Scan.id == old_id).values(created_at=datetime.now(timezone.utc) - timedelta(days=31)))
+        session.commit()
+    allowed = client.post(f"{API}/projects/{project_id}/scans", headers=headers)
+    assert allowed.status_code == 200 and allowed.json()["total_runs"] == needed
+
+
+def test_prompt_pool_is_shared_by_every_project(client, fake_stripe):
+    headers = signup(client, "pool")
+    workspace_id = workspace_of(client, headers)
+    first = make_project(client, headers)
+    subscribe(client, fake_stripe, workspace_id)  # Starter: 100 prompts in total
+    second = client.post(f"{API}/projects", json=PROJECT, headers=headers).json()["id"]
+    with SessionLocal() as session:
+        session.add_all([Prompt(project_id=uuid.UUID(first), text=f"prompt {i}", category="CATEGORY",
+                                intent="DISCOVERY", source="user") for i in range(100)])
+        session.commit()
+    prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
+    refused = client.post(f"{API}/projects/{second}/prompts", json=prompt, headers=headers)
+    assert refused.status_code == 409 and refused.json()["error"]["limit"] == "active_prompts"
+    generated = client.post(f"{API}/projects/{second}/prompts/generate", headers=headers).json()
+    assert generated["created"] > 0 and not any(p["is_active"] for p in generated["prompts"])  # kept for review
 
 
 def test_growth_checkout_and_limits(client, fake_stripe):

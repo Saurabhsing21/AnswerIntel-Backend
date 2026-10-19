@@ -5,6 +5,8 @@ from sqlalchemy import func, select
 
 from app.auth.dependencies import get_current_user
 from app.billing.plans import entitlements, require_active, require_room
+from app.billing.service import active_prompts
+from app.common.config import settings
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -37,8 +39,10 @@ def _active_count(session, project_id) -> int:
 
 def _require_prompt_room(session, project) -> None:
     ent = entitlements(session, project.workspace_id)
-    message = f"You can track up to {ent.active_prompts} active prompts."
-    require_room(ent, "active_prompts", _active_count(session, project.id), message, "PROMPT_LIMIT", 409)
+    message = f"Your plan includes {ent.active_prompts} active prompts across all projects."
+    require_room(ent, "active_prompts", active_prompts(session, project.workspace_id), message, "PROMPT_LIMIT", 409)
+    if _active_count(session, project.id) >= settings.max_active_prompts:  # hard ceiling per project
+        raise AppError(409, "PROMPT_LIMIT", f"A project can track up to {settings.max_active_prompts} active prompts.")
 
 
 @router.post("/generate")

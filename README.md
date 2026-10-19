@@ -89,7 +89,8 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 There is no free plan. A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Stripe Checkout
 (the website's pricing buttons go to `/register?plan=...`, which continues straight to Checkout; an unpaid account
 sees a "Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
-runs out on its own. Limits live in `app/billing/plans.py`. Without `STRIPE_SECRET_KEY` checkout says billing is off.
+runs out on its own. Each plan has a prompt pool shared by its projects and a monthly AI-answer allowance (prompt × engine) that
+every scan draws from; that allowance is what bounds model cost. Limits live in `app/billing/plans.py`. Without `STRIPE_SECRET_KEY` checkout says billing is off.
 
 Setup in Stripe test mode:
 

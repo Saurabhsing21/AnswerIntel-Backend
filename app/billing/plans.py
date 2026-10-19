@@ -27,11 +27,12 @@ class Plan:
     key: str
     name: str
     projects: int
-    active_prompts: int  # per project
+    active_prompts: int  # one pool shared by every project in the workspace
+    answers_per_month: int  # AI answers (prompt x engine) in any 30 days: the cap that bounds our model cost
     competitors: int  # per project
     engines: int | None  # None = every configured engine
-    scans_per_day: int  # per workspace, all projects together
-    seats: int
+    scans_per_day: int  # per workspace; an abuse guard, the answer cap is what bounds cost
+    seats: int | None  # None = unlimited (seats cost nothing to serve)
     retention_days: int
     schedules: bool
     experiments: bool
@@ -39,18 +40,23 @@ class Plan:
     price_yearly: int = 0
 
 
-# Roughly twice the usage of the comparable Peec AI tier. Yearly = 20% off, so it is a whole number a month.
-STARTER = Plan("starter", "Starter", projects=2, active_prompts=100, competitors=20, engines=None, scans_per_day=2,
-               seats=5, retention_days=183, schedules=True, experiments=False, price_monthly=20, price_yearly=192)
-GROWTH = Plan("growth", "Growth", projects=4, active_prompts=300, competitors=50, engines=None, scans_per_day=4,
-              seats=15, retention_days=365, schedules=True, experiments=True, price_monthly=50, price_yearly=480)
-PRO = Plan("pro", "Pro", projects=10, active_prompts=700, competitors=100, engines=None, scans_per_day=10,
-           seats=50, retention_days=730, schedules=True, experiments=True, price_monthly=100, price_yearly=960)
-TRIAL = Plan("trial", "Trial", projects=5, active_prompts=100, competitors=10, engines=None, scans_per_day=20,
-             seats=10, retention_days=365, schedules=True, experiments=True)  # legacy: Pro limits, ends on its own
+# Same mechanism as Peec AI (one prompt pool, automatic tracking, a monthly answer cap) with twice their prompts
+# and projects, tracked weekly. answers_per_month = prompts x 3 engines x ~4.3 weekly runs, so a workspace that
+# uses everything costs us about 30% of its price. Yearly = 20% off, so it is a whole number a month.
+STARTER = Plan("starter", "Starter", projects=2, active_prompts=100, answers_per_month=1300, competitors=20,
+               engines=None, scans_per_day=2, seats=None, retention_days=183, schedules=True, experiments=False,
+               price_monthly=20, price_yearly=192)
+GROWTH = Plan("growth", "Growth", projects=4, active_prompts=300, answers_per_month=3900, competitors=50,
+              engines=None, scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True,
+              price_monthly=50, price_yearly=480)
+PRO = Plan("pro", "Pro", projects=10, active_prompts=700, answers_per_month=9000, competitors=100,
+           engines=None, scans_per_day=10, seats=None, retention_days=730, schedules=True, experiments=True,
+           price_monthly=100, price_yearly=960)
+TRIAL = Plan("trial", "Trial", projects=4, active_prompts=300, answers_per_month=3900, competitors=50, engines=None,
+             scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True)  # legacy, ends on its own
 # A workspace that has not paid yet: nothing allowed. Retention stays at the ceiling so nothing is purged early.
-NONE = Plan("none", "No plan", projects=0, active_prompts=0, competitors=0, engines=0, scans_per_day=0,
-            seats=0, retention_days=365, schedules=False, experiments=False)
+NONE = Plan("none", "No plan", projects=0, active_prompts=0, answers_per_month=0, competitors=0, engines=0,
+            scans_per_day=0, seats=0, retention_days=365, schedules=False, experiments=False)
 
 PLANS = {p.key: p for p in (NONE, TRIAL, STARTER, GROWTH, PRO)}
 
@@ -62,10 +68,11 @@ class Entitlements:
     can_write: bool
     projects: int
     active_prompts: int
+    answers_per_month: int
     competitors: int
     engines: int | None
     scans_per_day: int
-    seats: int
+    seats: int | None
     retention_days: int
     schedules: bool
     experiments: bool
@@ -95,7 +102,8 @@ def entitlements_for(sub: Subscription | None, now: datetime | None = None) -> E
         state=state,
         can_write=state not in ("lapsed", "unsubscribed"),
         projects=plan.projects,
-        active_prompts=min(plan.active_prompts, settings.max_active_prompts),
+        active_prompts=plan.active_prompts,
+        answers_per_month=plan.answers_per_month,
         competitors=min(plan.competitors, settings.max_competitors),
         engines=plan.engines,
         scans_per_day=plan.scans_per_day,
@@ -133,7 +141,8 @@ def require_feature(ent: Entitlements, feature: str, label: str) -> None:
 
 
 def require_room(ent: Entitlements, limit: str, used: int, message: str, code: str = "PLAN_LIMIT", status: int = 402) -> None:
-    """Raise when `used` already fills the plan's `limit`. Existing limit codes keep their old status."""
+    """Raise when `used` already fills the plan's `limit` (None = unlimited). Existing limit codes keep their old status."""
     require_active(ent)
-    if used >= getattr(ent, limit):
+    cap = getattr(ent, limit)
+    if cap is not None and used >= cap:
         raise AppError(status, code, message, limit=limit)

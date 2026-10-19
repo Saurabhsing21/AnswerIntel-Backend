@@ -35,6 +35,23 @@ def scans_today(session: Session, workspace_id: UUID, now: datetime | None = Non
     ) or 0
 
 
+def answers_used(session: Session, workspace_id: UUID, now: datetime | None = None) -> int:
+    """AI answers (prompt x engine) the workspace's scans asked for in the last 30 days."""
+    since = (now or datetime.now(timezone.utc)) - timedelta(days=30)
+    return session.scalar(
+        select(func.coalesce(func.sum(Scan.total_runs), 0)).join(Project, Project.id == Scan.project_id)
+        .where(Project.workspace_id == workspace_id, Scan.created_at >= since)
+    ) or 0
+
+
+def active_prompts(session: Session, workspace_id: UUID) -> int:
+    """Active prompts across every project: the plan's prompt pool."""
+    return session.scalar(
+        select(func.count()).select_from(Prompt).join(Project, Project.id == Prompt.project_id)
+        .where(Project.workspace_id == workspace_id, Prompt.is_active)
+    ) or 0
+
+
 def project_count(session: Session, workspace_id: UUID) -> int:
     return session.scalar(select(func.count()).select_from(Project).where(Project.workspace_id == workspace_id)) or 0
 
@@ -60,6 +77,8 @@ def usage(session: Session, workspace_id: UUID) -> dict:
         "seats": seat_count(session, workspace_id),
         "scans_today": scans_today(session, workspace_id),
         "scans_30_days": scans_today(session, workspace_id, days=30),
+        "answers_30_days": answers_used(session, workspace_id),
+        "active_prompts": active_prompts(session, workspace_id),
         "per_project": [
             {"id": str(pid), "brand_name": name, "active_prompts": p, "competitors": c} for pid, name, p, c in rows
         ],
