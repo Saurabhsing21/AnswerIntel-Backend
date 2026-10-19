@@ -86,7 +86,7 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 
 ## Billing (Stripe)
 
-There is no free plan. A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Stripe Checkout
+There is no free plan (only the one-off free check on the website). A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Stripe Checkout
 (the website's pricing buttons go to `/register?plan=...`, which continues straight to Checkout; an unpaid account
 sees a "Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
 runs out on its own. Each plan has a prompt pool shared by its projects and a monthly AI-answer allowance (prompt × engine) that
@@ -110,6 +110,17 @@ Setup in Stripe test mode:
 
 A failed payment emails the owners from the webhook. Celery beat also sends "trial ends in 3 days" and "trial
 ended" emails daily (`billing.trial_notices`), only for the legacy trials. Both use Resend and are skipped when it is not configured.
+
+## Measurement
+
+- ChatGPT and Gemini answer with their native web search (`WEB_SEARCH_ENGINES`), Perplexity always searches, and
+  every engine is told the project's market, so answers match what people see in the apps.
+- Google AI Mode is a fourth engine through DataForSEO's SERP API: set `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`
+  (from app.dataforseo.com/api-access, about $0.004 per answer). Empty = the engine is off.
+- Each verdict keeps the sentence from the answer behind it; rates carry a 95% margin and changes are flagged when
+  they are within run-to-run noise (dashboard and experiments).
+- `POST /api/v1/free-check` is a public, one-off check (5 unbranded prompts on ChatGPT and Perplexity, about $0.09).
+  The same site is answered from cache for 24 hours; `FREE_CHECKS_PER_DAY` caps total cost.
 
 ## Known limits
 
