@@ -86,18 +86,18 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 
 ## Billing (Stripe)
 
-There is no free plan. A new workspace can do nothing until it pays for Starter or Pro through Stripe Checkout
+There is no free plan. A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Stripe Checkout
 (the website's pricing buttons go to `/register?plan=...`, which continues straight to Checkout; an unpaid account
 sees a "Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
 runs out on its own. Limits live in `app/billing/plans.py`. Without `STRIPE_SECRET_KEY` checkout says billing is off.
 
 Setup in Stripe test mode:
 
-1. In the Stripe dashboard (test mode) create two products, Starter and Pro, each with a monthly and a yearly
-   recurring USD price. Put the four price ids in `STRIPE_PRICE_STARTER_MONTHLY`, `..._YEARLY`,
-   `STRIPE_PRICE_PRO_MONTHLY`, `..._YEARLY`, and the secret key (`sk_test_...`) in `STRIPE_SECRET_KEY`.
+1. In the Stripe dashboard (test mode) create three products, Starter, Growth and Pro, each with a monthly and a
+   yearly recurring USD price ($20/$200, $50/$500, $100/$1000). Put the six price ids in
+   `STRIPE_PRICE_{STARTER,GROWTH,PRO}_{MONTHLY,YEARLY}` and the secret key (`sk_test_...`) in `STRIPE_SECRET_KEY`.
 2. Turn on the Customer Portal (Settings -> Billing -> Customer portal): allow updating payment methods,
-   viewing invoices, cancelling, and switching between the four prices.
+   viewing invoices, cancelling, and switching between the six prices.
 3. Forward webhooks locally: `stripe listen --forward-to localhost:8000/api/v1/billing/webhook` and put the
    printed `whsec_...` in `STRIPE_WEBHOOK_SECRET`. In production add an endpoint for the same path with the
    events `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,

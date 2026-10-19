@@ -39,18 +39,19 @@ class Plan:
     price_yearly: int = 0
 
 
-PRO = Plan("pro", "Pro", projects=5, active_prompts=100, competitors=10, engines=None, scans_per_day=20,
-           seats=10, retention_days=365, schedules=True, experiments=True, price_monthly=79, price_yearly=790)
-STARTER = Plan("starter", "Starter", projects=1, active_prompts=25, competitors=3, engines=2, scans_per_day=5,
-               seats=3, retention_days=183, schedules=False, experiments=False, price_monthly=29, price_yearly=290)
+STARTER = Plan("starter", "Starter", projects=1, active_prompts=25, competitors=3, engines=2, scans_per_day=3,
+               seats=2, retention_days=183, schedules=False, experiments=False, price_monthly=20, price_yearly=200)
+GROWTH = Plan("growth", "Growth", projects=3, active_prompts=75, competitors=8, engines=None, scans_per_day=10,
+              seats=5, retention_days=365, schedules=True, experiments=True, price_monthly=50, price_yearly=500)
+PRO = Plan("pro", "Pro", projects=10, active_prompts=200, competitors=15, engines=None, scans_per_day=30,
+           seats=15, retention_days=730, schedules=True, experiments=True, price_monthly=100, price_yearly=1000)
 TRIAL = Plan("trial", "Trial", projects=5, active_prompts=100, competitors=10, engines=None, scans_per_day=20,
              seats=10, retention_days=365, schedules=True, experiments=True)  # legacy: Pro limits, ends on its own
 # A workspace that has not paid yet: nothing allowed. Retention stays at the ceiling so nothing is purged early.
 NONE = Plan("none", "No plan", projects=0, active_prompts=0, competitors=0, engines=0, scans_per_day=0,
             seats=0, retention_days=365, schedules=False, experiments=False)
 
-PLANS = {p.key: p for p in (NONE, TRIAL, STARTER, PRO)}
-PAID_PLANS = ("starter", "pro")
+PLANS = {p.key: p for p in (NONE, TRIAL, STARTER, GROWTH, PRO)}
 
 
 @dataclass(frozen=True)

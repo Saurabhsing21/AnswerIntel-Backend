@@ -71,6 +71,8 @@ def price_ids() -> dict[str, tuple[str, str]]:
     pairs = {
         settings.stripe_price_starter_monthly: ("starter", "month"),
         settings.stripe_price_starter_yearly: ("starter", "year"),
+        settings.stripe_price_growth_monthly: ("growth", "month"),
+        settings.stripe_price_growth_yearly: ("growth", "year"),
         settings.stripe_price_pro_monthly: ("pro", "month"),
         settings.stripe_price_pro_yearly: ("pro", "year"),
     }

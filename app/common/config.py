@@ -38,11 +38,11 @@ class Settings(BaseSettings):
     # Empty = run scans in-process (local dev). Set = Celery workers on Redis (PRD 56).
     redis_url: str = ""
 
-    raw_response_retention_days: int = 365  # PRD 88; aggregates are kept
+    raw_response_retention_days: int = 730  # ceiling; each plan keeps less or equal (PRD 88). Aggregates are kept
 
     # Hard ceilings per project. Each workspace's plan sets its own limits below these (app/billing/plans.py).
-    max_competitors: int = 10
-    max_active_prompts: int = 100
+    max_competitors: int = 15
+    max_active_prompts: int = 200
 
     cors_origins: str = "http://localhost:3000"
 
@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str = ""
     stripe_price_starter_monthly: str = ""
     stripe_price_starter_yearly: str = ""
+    stripe_price_growth_monthly: str = ""
+    stripe_price_growth_yearly: str = ""
     stripe_price_pro_monthly: str = ""
     stripe_price_pro_yearly: str = ""
     app_base_url: str = "http://localhost:3000"  # where Stripe sends people back after Checkout and the Portal

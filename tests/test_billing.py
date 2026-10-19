@@ -27,6 +27,8 @@ SECRET = "whsec_test_secret"
 PRICES = {
     "stripe_price_starter_monthly": "price_starter_m",
     "stripe_price_starter_yearly": "price_starter_y",
+    "stripe_price_growth_monthly": "price_growth_m",
+    "stripe_price_growth_yearly": "price_growth_y",
     "stripe_price_pro_monthly": "price_pro_m",
     "stripe_price_pro_yearly": "price_pro_y",
 }
@@ -331,8 +333,7 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     experiment = client.post(f"{API}/projects/{project_id}/experiments", json={"name": "FAQ page"}, headers=headers)
     assert error(experiment) == (402, "PLAN_LIMIT", "experiments")
 
-    assert add_member(client, headers, workspace_id).status_code == 200
-    assert add_member(client, headers, workspace_id).status_code == 200
+    assert add_member(client, headers, workspace_id).status_code == 200  # owner + 1 = Starter's 2 seats
     assert error(add_member(client, headers, workspace_id)) == (402, "PLAN_LIMIT", "seats")
 
     # Starter scans use the first two engines only.
@@ -343,8 +344,8 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     finished = client.get(f"{API}/projects/{project_id}/scans/{scan['id']}", headers=headers).json()
     assert finished["total_runs"] == min(2, len(V1_MODELS))
 
-    with SessionLocal() as session:  # four more scans today fill the workspace's five; 24 more prompts fill 25
-        session.add_all([Scan(project_id=uuid.UUID(project_id), status="completed") for _ in range(4)])
+    with SessionLocal() as session:  # two more scans today fill the workspace's three; 24 more prompts fill 25
+        session.add_all([Scan(project_id=uuid.UUID(project_id), status="completed") for _ in range(2)])
         session.add_all([Prompt(project_id=uuid.UUID(project_id), text=f"prompt {i}", category="CATEGORY",
                                 intent="DISCOVERY", source="user") for i in range(24)])
         session.commit()
@@ -353,8 +354,18 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     assert error(extra) == (409, "PROMPT_LIMIT", "active_prompts")
 
     usage = billing(client, headers, workspace_id).json()["usage"]
-    assert usage["projects"] == 1 and usage["seats"] == 3 and usage["scans_today"] == 5
+    assert usage["projects"] == 1 and usage["seats"] == 2 and usage["scans_today"] == 3
     assert usage["per_project"][0]["competitors"] == 3 and usage["per_project"][0]["active_prompts"] == 25
+
+
+def test_growth_checkout_and_limits(client, fake_stripe):
+    headers = signup(client, "growth")
+    workspace_id = workspace_of(client, headers)
+    response = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "growth", "interval": "year"}, headers=headers)
+    assert response.status_code == 200 and fake_stripe.checkouts[-1]["price"] == "price_growth_y"
+    subscribe(client, fake_stripe, workspace_id, plan_price="price_growth_m")
+    body = billing(client, headers, workspace_id).json()
+    assert body["plan"] == "growth" and body["limits"]["projects"] == 3 and body["limits"]["schedules"] is True
 
 
 def test_pro_allows_what_starter_does_not(client, fake_stripe):

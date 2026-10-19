@@ -2461,10 +2461,12 @@ Plans (limits in `app/billing/plans.py`, prices in Stripe):
 None     a new workspace before it pays: nothing allowed. There is no free plan or free trial;
          people pick a plan on the website, sign up and pay in Stripe Checkout.
 Trial    legacy only: workspaces that predate billing got 14 days with Pro limits, once.
-Starter  $29/mo or $290/yr: 1 project, 25 active prompts, 3 competitors, 2 engines,
-         5 scans/day, 3 seats, 6-month retention, no weekly schedule, no experiments.
-Pro      $79/mo or $790/yr: 5 projects, 100 active prompts, 10 competitors, all engines,
-         20 scans/day, 10 seats, 12-month retention, weekly schedules and experiments.
+Starter  $20/mo or $200/yr: 1 project, 25 active prompts, 3 competitors, 2 engines,
+         3 scans/day, 2 seats, 6-month retention, no weekly schedule, no experiments.
+Growth   $50/mo or $500/yr: 3 projects, 75 active prompts, 8 competitors, all engines,
+         10 scans/day, 5 seats, 12-month retention, weekly schedules and experiments.
+Pro      $100/mo or $1000/yr: 10 projects, 200 active prompts, 15 competitors, all engines,
+         30 scans/day, 15 seats, 24-month retention, weekly schedules and experiments.
 Lapsed   canceled, unpaid, trial over, or past due beyond a 7-day grace: read-only
          (view and export; no scans, prompts, competitors, projects or invites).
 ```
@@ -2478,7 +2480,7 @@ subscriptions
 -------------
 id SERIAL PK
 workspace_id UUID UNIQUE FK
-plan VARCHAR             -- none | starter | pro (trial: legacy)
+plan VARCHAR             -- none | starter | growth | pro (trial: legacy)
 interval VARCHAR         -- month | year
 status VARCHAR           -- Stripe status; none before the first payment
 trial_ends_at, current_period_end, grace_ends_at TIMESTAMPTZ

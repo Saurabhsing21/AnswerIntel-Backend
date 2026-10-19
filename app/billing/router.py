@@ -23,7 +23,7 @@ RETURN_PATH = r"^/([^/\s\\][^\s\\]*)?$"
 
 
 class CheckoutRequest(BaseModel):
-    plan: Literal["starter", "pro"]
+    plan: Literal["starter", "growth", "pro"]
     interval: Literal["month", "year"] = "month"
     return_path: str = Field(default="/projects", pattern=RETURN_PATH, max_length=500)
 
