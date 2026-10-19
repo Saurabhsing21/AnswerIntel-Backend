@@ -1,13 +1,14 @@
 """Plans and what each one allows. The single source for every per-workspace limit.
 
-Stripe holds the prices; this file holds the limits. The frontend copy for the pricing section is
+There is no free plan: a new workspace has no plan until it pays. Trial rows exist only for workspaces
+that predate billing (backfilled once) and run out on their own. Stripe holds the prices; this file holds the limits. The frontend copy for the pricing section is
 frontend/lib/billing/plans.ts; keep the two in step when a number changes. The global settings
 (max_active_prompts, max_competitors, max_scans_per_day, raw_response_retention_days) stay as hard
 ceilings: a plan can only lower them.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -17,7 +18,7 @@ from app.billing.models import Subscription
 from app.common.config import settings
 from app.common.errors import AppError
 
-TRIAL_DAYS = 14
+TRIAL_DAYS = 14  # only for the one-time backfill of pre-billing workspaces
 GRACE_DAYS = 7  # writes keep working this long after a failed payment
 
 
@@ -43,16 +44,19 @@ PRO = Plan("pro", "Pro", projects=5, active_prompts=100, competitors=10, engines
 STARTER = Plan("starter", "Starter", projects=1, active_prompts=25, competitors=3, engines=2, scans_per_day=5,
                seats=3, retention_days=183, schedules=False, experiments=False, price_monthly=29, price_yearly=290)
 TRIAL = Plan("trial", "Trial", projects=5, active_prompts=100, competitors=10, engines=None, scans_per_day=20,
-             seats=10, retention_days=365, schedules=True, experiments=True)  # Pro limits, no card
+             seats=10, retention_days=365, schedules=True, experiments=True)  # legacy: Pro limits, ends on its own
+# A workspace that has not paid yet: nothing allowed. Retention stays at the ceiling so nothing is purged early.
+NONE = Plan("none", "No plan", projects=0, active_prompts=0, competitors=0, engines=0, scans_per_day=0,
+            seats=0, retention_days=365, schedules=False, experiments=False)
 
-PLANS = {p.key: p for p in (TRIAL, STARTER, PRO)}
+PLANS = {p.key: p for p in (NONE, TRIAL, STARTER, PRO)}
 PAID_PLANS = ("starter", "pro")
 
 
 @dataclass(frozen=True)
 class Entitlements:
     plan: str
-    state: str  # trialing | active | past_due | lapsed
+    state: str  # unsubscribed | trialing | active | past_due | lapsed
     can_write: bool
     projects: int
     active_prompts: int
@@ -69,8 +73,8 @@ class Entitlements:
 
 
 def state_of(sub: Subscription | None, now: datetime) -> str:
-    if sub is None:
-        return "lapsed"
+    if sub is None or sub.plan == "none":
+        return "unsubscribed"
     if sub.plan == "trial":
         return "trialing" if sub.trial_ends_at and sub.trial_ends_at > now else "lapsed"
     if sub.status in ("active", "trialing"):
@@ -82,12 +86,12 @@ def state_of(sub: Subscription | None, now: datetime) -> str:
 
 def entitlements_for(sub: Subscription | None, now: datetime | None = None) -> Entitlements:
     now = now or datetime.now(timezone.utc)
-    plan = PLANS.get(sub.plan if sub else "trial", TRIAL)
+    plan = PLANS.get(sub.plan if sub else "none", NONE)
     state = state_of(sub, now)
     return Entitlements(
         plan=plan.key,
         state=state,
-        can_write=state != "lapsed",
+        can_write=state not in ("lapsed", "unsubscribed"),
         projects=plan.projects,
         active_prompts=min(plan.active_prompts, settings.max_active_prompts),
         competitors=min(plan.competitors, settings.max_competitors),
@@ -110,18 +114,14 @@ def engines_for(engines: list, ent: Entitlements) -> list:
     return engines if ent.engines is None else engines[: ent.engines]
 
 
-def trial_ends(now: datetime) -> datetime:
-    return now + timedelta(days=TRIAL_DAYS)
-
-
 def require_active(ent: Entitlements) -> None:
     """Lapsed workspaces are read-only: they can view and export, nothing that adds data or spends money."""
     if not ent.can_write:
-        raise AppError(
-            402, "SUBSCRIPTION_INACTIVE",
-            "This workspace's plan is not active. Choose a plan to keep scanning and adding data.",
-            limit="subscription",
+        message = (
+            "Choose a plan to start scanning." if ent.state == "unsubscribed"
+            else "This workspace's plan is not active. Renew it to keep scanning and adding data."
         )
+        raise AppError(402, "SUBSCRIPTION_INACTIVE", message, limit="subscription")
 
 
 def require_feature(ent: Entitlements, feature: str, label: str) -> None:

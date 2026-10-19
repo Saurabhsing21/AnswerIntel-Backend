@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.auth.dependencies import get_current_user
 from app.billing import stripe_client
 from app.billing.models import Subscription
-from app.billing.plans import PAID_PLANS, PLANS, entitlements_for
+from app.billing.plans import PLANS, entitlements_for
 from app.billing.service import price_for, usage
 from app.common.config import settings
 from app.common.database import SessionLocal
@@ -76,11 +76,6 @@ def get_billing(workspace_id: UUID, current_user: User = Depends(get_current_use
             "grace_ends_at": sub.grace_ends_at if sub else None,
             "limits": ent.limits(),
             "usage": usage(session, workspace_id),
-            "plans": [
-                {"key": p.key, "name": p.name, "price_monthly": p.price_monthly, "price_yearly": p.price_yearly,
-                 **{k: v for k, v in p.__dict__.items() if k not in ("key", "name", "price_monthly", "price_yearly")}}
-                for p in (PLANS[k] for k in PAID_PLANS)
-            ],
         }
 
 

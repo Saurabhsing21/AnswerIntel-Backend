@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.billing.plans import entitlements, require_room
-from app.billing.service import seat_count, start_trial
+from app.billing import service as billing
+from app.billing.service import seat_count
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.users.models import User
@@ -64,7 +65,7 @@ def create_workspace(payload: WorkspaceCreate, current_user: User = Depends(get_
         workspace = Workspace(name=payload.name.strip())
         session.add(workspace)
         session.flush()
-        start_trial(session, workspace.id, current_user.id)
+        billing.open_billing(session, workspace.id)
         session.add(WorkspaceMember(workspace_id=workspace.id, user_id=current_user.id, role="owner"))
         session.commit()
         return {"id": str(workspace.id), "name": workspace.name, "role": "owner"}

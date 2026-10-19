@@ -12,7 +12,7 @@ from fastapi import Depends
 from app.auth.dependencies import get_current_user
 from app.common.ratelimit import limit_login
 from app.workspaces.models import Workspace, WorkspaceMember
-from app.billing.service import start_trial
+from app.billing import service as billing
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -43,7 +43,7 @@ def register(request: RegisterRequest):
         session.add(workspace)
         session.flush()
         session.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="owner"))
-        start_trial(session, workspace.id, user.id)
+        billing.open_billing(session, workspace.id)
         session.commit()
         session.refresh(user)
 

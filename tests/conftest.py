@@ -27,6 +27,27 @@ def no_backoff_waiting(monkeypatch):
     monkeypatch.setattr("app.scans.execution._backoff", lambda seconds: None)
 
 
+@pytest.fixture(autouse=True)
+def paid_workspaces(monkeypatch):
+    """There is no free plan, so every workspace a test creates starts on paid Pro (as if Checkout ran).
+    Billing tests that need an unpaid workspace undo this with the `unpaid_signups` fixture."""
+    from app.billing import service
+    from app.billing.models import Subscription
+
+    real = service.open_billing
+    monkeypatch.setattr(service, "open_billing", lambda session, workspace_id: session.add(
+        Subscription(workspace_id=workspace_id, plan="pro", interval="month", status="active")
+    ))
+    return real
+
+
+@pytest.fixture
+def unpaid_signups(monkeypatch, paid_workspaces):
+    from app.billing import service
+
+    monkeypatch.setattr(service, "open_billing", paid_workspaces)
+
+
 @pytest.fixture(scope="session")
 def client() -> TestClient:
     return TestClient(app)

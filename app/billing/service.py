@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.billing.models import Subscription
-from app.billing.plans import GRACE_DAYS, trial_ends
+from app.billing.plans import GRACE_DAYS
 from app.common.config import settings
 from app.competitors.models import Competitor
 from app.projects.models import Project
@@ -20,23 +20,15 @@ log = logging.getLogger(__name__)
 _NOT_LIVE = ("incomplete", "incomplete_expired", "canceled", "unpaid")
 
 
-def start_trial(session: Session, workspace_id: UUID, owner_id: int, now: datetime | None = None) -> Subscription:
-    """Card-free trial for a new workspace. Extra workspaces share the owner's first trial window,
-    so creating workspaces never extends free use."""
-    now = now or datetime.now(timezone.utc)
-    ends = trial_ends(now)
-    earliest = session.scalar(
-        select(func.min(Subscription.trial_ends_at))
-        .join(WorkspaceMember, WorkspaceMember.workspace_id == Subscription.workspace_id)
-        .where(WorkspaceMember.user_id == owner_id, WorkspaceMember.role == "owner")
-    )
-    sub = Subscription(workspace_id=workspace_id, plan="trial", status="trialing", trial_ends_at=min(ends, earliest or ends))
+def open_billing(session: Session, workspace_id: UUID) -> Subscription:
+    """Billing record for a new workspace. There is no free plan: it can do nothing until Checkout is paid."""
+    sub = Subscription(workspace_id=workspace_id, plan="none", status="none")
     session.add(sub)
     return sub
 
 
-def scans_today(session: Session, workspace_id: UUID, now: datetime | None = None) -> int:
-    since = (now or datetime.now(timezone.utc)) - timedelta(days=1)
+def scans_today(session: Session, workspace_id: UUID, now: datetime | None = None, days: int = 1) -> int:
+    since = (now or datetime.now(timezone.utc)) - timedelta(days=days)
     return session.scalar(
         select(func.count()).select_from(Scan).join(Project, Project.id == Scan.project_id)
         .where(Project.workspace_id == workspace_id, Scan.created_at >= since)
@@ -67,6 +59,7 @@ def usage(session: Session, workspace_id: UUID) -> dict:
         "projects": len(rows),
         "seats": seat_count(session, workspace_id),
         "scans_today": scans_today(session, workspace_id),
+        "scans_30_days": scans_today(session, workspace_id, days=30),
         "per_project": [
             {"id": str(pid), "brand_name": name, "active_prompts": p, "competitors": c} for pid, name, p, c in rows
         ],

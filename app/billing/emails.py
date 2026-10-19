@@ -1,4 +1,4 @@
-"""Billing emails: trial ending, trial ended, payment failed. Sent to the workspace owners."""
+"""Billing emails: payment failed, and trial ending/ended for workspaces that predate billing. Sent to the owners."""
 
 import logging
 from datetime import datetime, timedelta

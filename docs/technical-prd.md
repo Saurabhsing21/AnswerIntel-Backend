@@ -2458,7 +2458,9 @@ money, so limits follow a paid plan per workspace. Stripe is the payment provide
 Plans (limits in `app/billing/plans.py`, prices in Stripe):
 
 ```text
-Trial    14 days, no card, Pro limits. Read-only when it ends unconverted.
+None     a new workspace before it pays: nothing allowed. There is no free plan or free trial;
+         people pick a plan on the website, sign up and pay in Stripe Checkout.
+Trial    legacy only: workspaces that predate billing got 14 days with Pro limits, once.
 Starter  $29/mo or $290/yr: 1 project, 25 active prompts, 3 competitors, 2 engines,
          5 scans/day, 3 seats, 6-month retention, no weekly schedule, no experiments.
 Pro      $79/mo or $790/yr: 5 projects, 100 active prompts, 10 competitors, all engines,
@@ -2476,9 +2478,9 @@ subscriptions
 -------------
 id SERIAL PK
 workspace_id UUID UNIQUE FK
-plan VARCHAR             -- trial | starter | pro
+plan VARCHAR             -- none | starter | pro (trial: legacy)
 interval VARCHAR         -- month | year
-status VARCHAR           -- Stripe status, or trialing for the card-free trial
+status VARCHAR           -- Stripe status; none before the first payment
 trial_ends_at, current_period_end, grace_ends_at TIMESTAMPTZ
 cancel_at_period_end BOOLEAN
 notified VARCHAR         -- last trial email sent

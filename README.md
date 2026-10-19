@@ -57,7 +57,7 @@ app refuses to start with a weak `JWT_SECRET_KEY`.
 
 ## The product loop
 
-register -> workspace (personal one is created, with a 14-day trial) -> project -> competitors (plan limit) -> `POST /prompts/generate` ->
+register (from a pricing plan) -> Stripe Checkout -> workspace subscribed -> project -> competitors (plan limit) -> `POST /prompts/generate` ->
 review prompts -> `POST /scans` (queued; poll `GET /scans/{id}`) -> `GET /dashboard`, `/scans/{id}/results`,
 `/citations`, `/competitors/analysis`, `/opportunities` -> `POST /experiments` (baseline) -> change the site ->
 re-scan -> `POST /experiments/{id}/complete` -> `POST /reports` (share, export HTML/PDF, email).
@@ -81,13 +81,15 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 | `experiments` | Baseline and follow-up snapshots with before/after comparison |
 | `reports` | Weekly/monthly/manual reports, share links, HTML/PDF export, Resend email |
 | `waitlist` | Public landing-page signups (idempotent, rate limited) |
-| `billing` | Plans and entitlements (every limit), Stripe Checkout/Portal, webhook, trial emails |
+| `billing` | Plans and entitlements (every limit), Stripe Checkout/Portal, webhook, billing emails |
 | `common` | Config, database, errors, rate limiting, safe HTTP fetcher, observability |
 
 ## Billing (Stripe)
 
-Each workspace starts on a 14-day trial with Pro limits; Starter and Pro are paid through Stripe. Limits live
-in `app/billing/plans.py`. Without `STRIPE_SECRET_KEY` trials still work and checkout says billing is off.
+There is no free plan. A new workspace can do nothing until it pays for Starter or Pro through Stripe Checkout
+(the website's pricing buttons go to `/register?plan=...`, which continues straight to Checkout; an unpaid account
+sees a "Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
+runs out on its own. Limits live in `app/billing/plans.py`. Without `STRIPE_SECRET_KEY` checkout says billing is off.
 
 Setup in Stripe test mode:
 
@@ -103,11 +105,10 @@ Setup in Stripe test mode:
    directly, not through the Next.js proxy.
 4. Set `APP_BASE_URL` to the dashboard URL (Checkout and the Portal return there).
 5. Try it: Checkout with `4242 4242 4242 4242` (plan flips to the paid tier), then `4000 0000 0000 0341`
-   (payment fails: past due with a 7-day grace, then read-only). Cancel in the Portal. For trial expiry,
-   set `trial_ends_at` in the past on the workspace's `subscriptions` row.
+   (payment fails: past due with a 7-day grace, then read-only). Cancel in the Portal (the workspace goes read-only when the period ends).
 
-Celery beat sends "trial ends in 3 days" and "trial ended" emails daily (`billing.trial_notices`); a failed
-payment emails the owners from the webhook. Both use Resend and are skipped when it is not configured.
+A failed payment emails the owners from the webhook. Celery beat also sends "trial ends in 3 days" and "trial
+ended" emails daily (`billing.trial_notices`), only for the legacy trials. Both use Resend and are skipped when it is not configured.
 
 ## Known limits
 

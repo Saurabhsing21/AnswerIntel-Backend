@@ -124,26 +124,28 @@ def add_member(client, owner, workspace_id):
     return client.post(f"{API}/workspaces/{workspace_id}/members", json={"email": email}, headers=owner)
 
 
-def test_signup_starts_a_card_free_trial_with_pro_limits(client):
-    headers = signup(client, "trial")
-    body = billing(client, headers, workspace_of(client, headers)).json()
-    assert body["plan"] == "trial" and body["state"] == "trialing" and body["can_write"] is True
-    assert body["can_manage"] is True and body["has_billing_account"] is False
-    ends = datetime.fromisoformat(body["trial_ends_at"])
-    assert timedelta(days=13, hours=23) < ends - datetime.now(timezone.utc) <= timedelta(days=14)
-    assert body["limits"]["projects"] == 5 and body["limits"]["schedules"] is True and body["limits"]["engines"] is None
-    assert body["usage"] == {"projects": 0, "seats": 1, "scans_today": 0, "per_project": []}
-    assert [p["key"] for p in body["plans"]] == ["starter", "pro"]
+def test_signup_has_no_plan_until_checkout_is_paid(client, unpaid_signups, fake_stripe):
+    headers = signup(client, "noplan")
+    workspace_id = workspace_of(client, headers)
+    body = billing(client, headers, workspace_id).json()
+    assert body["plan"] == "none" and body["state"] == "unsubscribed" and body["can_write"] is False
+    assert body["trial_ends_at"] is None and body["can_manage"] is True
+    assert body["usage"]["scans_30_days"] == 0
+    blocked = client.post(f"{API}/projects", json=PROJECT, headers=headers)
+    assert blocked.status_code == 402 and blocked.json()["error"]["code"] == "SUBSCRIPTION_INACTIVE"
+    assert blocked.json()["error"]["message"] == "Choose a plan to start scanning."
+
+    checkout = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "starter"}, headers=headers)
+    assert checkout.status_code == 200
+    subscribe(client, fake_stripe, workspace_id)
+    assert billing(client, headers, workspace_id).json()["state"] == "active"
+    assert client.post(f"{API}/projects", json=PROJECT, headers=headers).status_code == 200
 
 
-def test_extra_workspaces_share_the_owners_first_trial_window(client):
-    headers = signup(client, "trialws")
-    first = workspace_of(client, headers)
-    soon = datetime.now(timezone.utc) + timedelta(days=2)
-    set_subscription(first, trial_ends_at=soon)
+def test_new_workspaces_start_without_a_plan_too(client, unpaid_signups):
+    headers = signup(client, "noplanws")
     second = client.post(f"{API}/workspaces", json={"name": "Side project"}, headers=headers).json()["id"]
-    ends = datetime.fromisoformat(billing(client, headers, second).json()["trial_ends_at"])
-    assert abs((ends - soon).total_seconds()) < 1
+    assert billing(client, headers, second).json()["state"] == "unsubscribed"
 
 
 def test_billing_endpoints_owner_only(client, fake_stripe):
@@ -282,11 +284,13 @@ def test_canceled_subscription_lapses_and_a_late_event_cannot_undo_a_newer_one(c
     assert current == new["id"]
 
 
-def test_expired_trial_is_read_only(client):
+def test_expired_legacy_trial_is_read_only(client):
     headers = signup(client, "expired")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    set_subscription(workspace_id, trial_ends_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    # Only workspaces that predate billing have a trial; it cannot be started any more.
+    set_subscription(workspace_id, plan="trial", status="trialing", interval=None,
+                     trial_ends_at=datetime.now(timezone.utc) - timedelta(seconds=1))
 
     prompt = {"text": "best crm", "category": "CATEGORY", "intent": "DISCOVERY"}
     attempts = {
@@ -367,7 +371,7 @@ def test_trial_notices_are_sent_once(client, outbox):
     workspace_id = workspace_of(client, headers)
     email = client.get(f"{API}/auth/me", headers=headers).json()["email"]
     now = datetime.now(timezone.utc)
-    set_subscription(workspace_id, trial_ends_at=now + timedelta(days=2))
+    set_subscription(workspace_id, plan="trial", status="trialing", trial_ends_at=now + timedelta(days=2))
 
     send_trial_notices(now)
     send_trial_notices(now)
@@ -388,11 +392,11 @@ def test_retention_follows_each_workspaces_plan(client, fake_stripe):
 
     starter_ws, starter_scan = scanned("retstarter")
     subscribe(client, fake_stripe, starter_ws)
-    _, trial_scan = scanned("rettrial")
+    _, pro_scan = scanned("retpro")
     seven_months_ago = datetime.now(timezone.utc) - timedelta(days=210)
     with SessionLocal() as session:
         session.execute(
-            update(AIResponseRecord).where(AIResponseRecord.scan_id.in_([starter_scan, trial_scan])).values(created_at=seven_months_ago)
+            update(AIResponseRecord).where(AIResponseRecord.scan_id.in_([starter_scan, pro_scan])).values(created_at=seven_months_ago)
         )
         session.commit()
 
@@ -401,7 +405,7 @@ def test_retention_follows_each_workspaces_plan(client, fake_stripe):
         def remaining(scan_id):
             return session.query(AIResponseRecord).filter(AIResponseRecord.scan_id == scan_id).count()
         assert remaining(starter_scan) == 0  # Starter keeps 6 months
-        assert remaining(trial_scan) > 0  # Trial keeps 12
+        assert remaining(pro_scan) > 0  # Pro keeps 12
 
 
 def test_backfill_gives_pre_billing_workspaces_a_trial(client):
