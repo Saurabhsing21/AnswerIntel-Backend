@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -53,6 +53,9 @@ class Project(Base):
         String(100),
         nullable=False,
     )
+
+    # Engine keys this project scans (app/providers/models.py). None = the default engines.
+    engines: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -1,3 +1,4 @@
+from app.providers.models import engines_for_project
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -5,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
-from app.billing.plans import entitlements, require_room
+from app.billing.plans import check_engine_choice, engines_for, entitlements, require_room
 from app.billing.service import project_count
 from app.common.access import project_access
 from app.common.database import SessionLocal
@@ -38,6 +39,10 @@ def create_project(
             raise AppError(404, "WORKSPACE_NOT_FOUND", "Workspace not found.")
         ent = entitlements(session, workspace_id)
         require_room(ent, "projects", project_count(session, workspace_id), f"Your plan includes {ent.projects} project(s).")
+        if request.engines is not None:
+            check_engine_choice(ent, request.engines)
+        elif ent.locked_engines or ent.engines is not None:  # the free trial starts on engines it can actually use
+            request.engines = [e.key for e in engines_for(engines_for_project(None), ent)]
 
         project = Project(
             workspace_id=workspace_id,
@@ -47,6 +52,7 @@ def create_project(
             description=request.description,
             category=request.category,
             country=request.country,
+            engines=request.engines,
         )
 
         session.add(project)
@@ -65,6 +71,7 @@ def create_project(
             "description": project.description,
             "category": project.category,
             "country": project.country,
+            "engines": [e.key for e in engines_for_project(project.engines)],
         }
 
 
@@ -95,6 +102,7 @@ def get_project(
             "description": project.description,
             "category": project.category,
             "country": project.country,
+            "engines": [e.key for e in engines_for_project(project.engines)],
         }
 
 
@@ -118,6 +126,7 @@ def list_projects(
                 "description": project.description,
                 "category": project.category,
                 "country": project.country,
+                "engines": [e.key for e in engines_for_project(project.engines)],
             }
             for project in projects
         ]
@@ -157,6 +166,10 @@ def update_project(
         if request.country is not None:
             project.country = request.country
 
+        if request.engines is not None:
+            check_engine_choice(entitlements(session, project.workspace_id), request.engines)
+            project.engines = request.engines
+
         session.commit()
         session.refresh(project)
 
@@ -168,6 +181,7 @@ def update_project(
             "description": project.description,
             "category": project.category,
             "country": project.country,
+            "engines": [e.key for e in engines_for_project(project.engines)],
         }
 
 @router.delete("/{project_id}")

@@ -4,14 +4,15 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 
 from app.auth.dependencies import get_current_user
-from app.billing.plans import entitlements, require_active, require_room
+from app.billing.plans import entitlements, require_active, require_pro, require_room
 from app.billing.service import active_prompts
 from app.common.config import settings
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
+from app.common.llm import LLMError
 from app.prompts.models import Prompt
-from app.prompts.schemas import PromptCreate, PromptUpdate
+from app.prompts.schemas import PromptCreate, PromptsAccept, PromptSuggest, PromptUpdate
 from app.prompts.service import PromptDiscoveryService
 from app.users.models import User
 
@@ -27,6 +28,7 @@ def serialize(p: Prompt) -> dict:
         "source": p.source,
         "importance": p.importance,
         "is_active": p.is_active,
+        "engines": p.engines,  # None = every engine the project scans
         "created_at": p.created_at,
     }
 
@@ -54,6 +56,30 @@ def generate(project_id: UUID, current_user: User = Depends(get_current_user)):
         session.commit()
         prompts = session.scalars(select(Prompt).where(Prompt.project_id == project.id).order_by(Prompt.id)).all()
         return {"created": len(created), "prompts": [serialize(p) for p in prompts]}
+
+
+@router.post("/suggest")
+def suggest(project_id: UUID, request: PromptSuggest, current_user: User = Depends(get_current_user)):
+    """New prompts written to the user's instructions. Nothing is saved until they accept some."""
+    with SessionLocal() as session:
+        project = get_owned_project(session, project_id, current_user.id)
+        require_pro(entitlements(session, project.workspace_id), "More prompts")
+        try:
+            prompts, sample = PromptDiscoveryService().suggest(session, project, request.instructions.strip(), request.count)
+        except LLMError:
+            raise AppError(502, "GENERATION_FAILED", "We couldn't write prompts just now. Please try again.")
+        return {"prompts": prompts, "sample": sample}
+
+
+@router.post("/accept")
+def accept(project_id: UUID, request: PromptsAccept, current_user: User = Depends(get_current_user)):
+    """Adds the suggested prompts the user kept."""
+    with SessionLocal() as session:
+        project = get_owned_project(session, project_id, current_user.id)
+        require_pro(entitlements(session, project.workspace_id), "More prompts")
+        created = PromptDiscoveryService().add_many(session, project, [p.model_dump() for p in request.prompts])
+        session.commit()
+        return {"created": len(created), "inactive": sum(not p.is_active for p in created), "prompts": [serialize(p) for p in created]}
 
 
 @router.get("")
@@ -85,6 +111,7 @@ def add_prompt(project_id: UUID, request: PromptCreate, current_user: User = Dep
         )
         if duplicate:
             raise AppError(409, "PROMPT_DUPLICATE", "This prompt already exists.")
+        require_pro(entitlements(session, project.workspace_id), "Your own prompts")
         _require_prompt_room(session, project)
         prompt = Prompt(project_id=project.id, text=text, category=request.category, intent=request.intent, source="user")
         session.add(prompt)
@@ -113,6 +140,8 @@ def update_prompt(
             value = getattr(request, field)
             if value is not None:
                 setattr(prompt, field, value.strip() if isinstance(value, str) else value)
+        if request.engines is not None:
+            prompt.engines = request.engines or None
         session.commit()
         session.refresh(prompt)
         return serialize(prompt)

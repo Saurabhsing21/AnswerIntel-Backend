@@ -12,6 +12,7 @@ from sqlalchemy import func
 from app.billing.plans import entitlements, require_room
 from app.common.errors import AppError
 from app.competitors.schemas import CompetitorCreate, CompetitorUpdate
+from app.competitors.suggest import _domain, suggest_competitors
 from app.projects.models import Project
 from app.users.models import User
 
@@ -181,3 +182,16 @@ def update_competitor(
         session.commit()
         session.refresh(competitor)
         return {"id": competitor.id, "name": competitor.name, "website": competitor.website}
+
+
+@router.get("/suggestions")
+def competitor_suggestions(project_id: UUID, current_user: User = Depends(get_current_user)):
+    """Who this brand most likely competes with, minus the competitors already tracked."""
+    with SessionLocal() as session:
+        project = get_user_project(session, project_id, current_user.id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        tracked = session.scalars(select(Competitor).where(Competitor.project_id == project.id)).all()
+        exclude = {c.name.lower() for c in tracked} | {_domain(c.website) for c in tracked if c.website}
+        args = (project.brand_name, project.website, project.category, project.country, project.description, exclude)
+    return suggest_competitors(*args)  # the model call runs after the session is closed
