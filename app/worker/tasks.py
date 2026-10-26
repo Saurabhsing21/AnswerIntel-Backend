@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.billing.emails import send_trial_notices
+from app.billing.emails import send_free_nudges, send_trial_notices
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -64,6 +64,11 @@ def purge_expired_task() -> dict:
 @celery_app.task(name="billing.trial_notices")
 def trial_notices_task() -> dict:
     return send_trial_notices(datetime.now(timezone.utc))
+
+
+@celery_app.task(name="billing.free_nudges")
+def free_nudges_task() -> dict:
+    return send_free_nudges(datetime.now(timezone.utc))
 
 
 @celery_app.task(name="schedules.requeue_stuck")

@@ -17,7 +17,7 @@ from app.common.config import settings
 from app.common.database import SessionLocal
 from app.competitors.models import Competitor
 from app.prompts.models import Prompt
-from app.providers.registry import V1_MODELS
+from app.providers.models import V1_MODELS
 from app.providers.response_model import AIResponseRecord
 from app.scans.models import Scan
 from app.scans.retention import purge_expired

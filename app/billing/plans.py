@@ -1,7 +1,7 @@
 """Plans and what each one allows. The single source for every per-workspace limit.
 
-There is no free plan: a new workspace has no plan until it pays. Trial rows exist only for workspaces
-that predate billing (backfilled once) and run out on their own. Stripe holds the prices; this file holds the limits. The frontend copy for the pricing section is
+A new account's own workspace starts on the free trial: one project and one scan, no card. Any other workspace
+has no plan until it pays. "trial" rows exist only for workspaces that predate billing and run out on their own. Stripe holds the prices; this file holds the limits. The frontend copy for the pricing section is
 frontend/lib/billing/plans.ts; keep the two in step when a number changes. The global settings
 (max_active_prompts, max_competitors, max_scans_per_day, raw_response_retention_days) stay as hard
 ceilings: a plan can only lower them.
@@ -38,6 +38,9 @@ class Plan:
     experiments: bool
     price_monthly: int = 0  # USD, display only; Stripe charges the price ids in settings
     price_yearly: int = 0
+    scans_total: int | None = None  # scans ever, per workspace; only the free trial has one
+    pro: bool = True  # drafts, re-tests, reports, exports, invites, alerts, more prompts: everything past the free trial
+    locked_engines: tuple[str, ...] = ()  # engines this plan can't use (the costliest ones on the free trial)
 
 
 # Same mechanism as Peec AI: one prompt pool, automatic weekly tracking, a monthly answer cap. Answers are collected
@@ -55,17 +58,22 @@ PRO = Plan("pro", "Pro", projects=10, active_prompts=160, answers_per_month=2800
            price_monthly=100, price_yearly=960)
 TRIAL = Plan("trial", "Trial", projects=4, active_prompts=80, answers_per_month=1400, competitors=50, engines=None,
              scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True)  # legacy, ends on its own
+# The free trial: one full scan of one brand, so people see their own results before paying. Cost: at most
+# 10 prompts on the default engines (40 answers), about $0.40, and only after the email address is confirmed.
+FREE = Plan("free", "Free trial", projects=1, active_prompts=10, answers_per_month=40, competitors=3, engines=3,
+            scans_per_day=1, seats=None, retention_days=365, schedules=False, experiments=False, scans_total=1,
+            pro=False, locked_engines=("claude", "grok", "google"))
 # A workspace that has not paid yet: nothing allowed. Retention stays at the ceiling so nothing is purged early.
 NONE = Plan("none", "No plan", projects=0, active_prompts=0, answers_per_month=0, competitors=0, engines=0,
             scans_per_day=0, seats=0, retention_days=365, schedules=False, experiments=False)
 
-PLANS = {p.key: p for p in (NONE, TRIAL, STARTER, GROWTH, PRO)}
+PLANS = {p.key: p for p in (NONE, FREE, TRIAL, STARTER, GROWTH, PRO)}
 
 
 @dataclass(frozen=True)
 class Entitlements:
     plan: str
-    state: str  # unsubscribed | trialing | active | past_due | lapsed
+    state: str  # unsubscribed | free | trialing | active | past_due | lapsed
     can_write: bool
     projects: int
     active_prompts: int
@@ -77,6 +85,9 @@ class Entitlements:
     retention_days: int
     schedules: bool
     experiments: bool
+    scans_total: int | None
+    pro: bool
+    locked_engines: tuple[str, ...]
 
     def limits(self) -> dict:
         return {k: v for k, v in self.__dict__.items() if k not in ("plan", "state", "can_write")}
@@ -85,6 +96,8 @@ class Entitlements:
 def state_of(sub: Subscription | None, now: datetime) -> str:
     if sub is None or sub.plan == "none":
         return "unsubscribed"
+    if sub.plan == "free":
+        return "free"
     if sub.plan == "trial":
         return "trialing" if sub.trial_ends_at and sub.trial_ends_at > now else "lapsed"
     if sub.status in ("active", "trialing"):
@@ -112,6 +125,9 @@ def entitlements_for(sub: Subscription | None, now: datetime | None = None) -> E
         retention_days=min(plan.retention_days, settings.raw_response_retention_days),
         schedules=plan.schedules,
         experiments=plan.experiments,
+        scans_total=plan.scans_total,
+        pro=plan.pro,
+        locked_engines=plan.locked_engines,
     )
 
 
@@ -121,8 +137,25 @@ def entitlements(session: Session, workspace_id: UUID, now: datetime | None = No
 
 
 def engines_for(engines: list, ent: Entitlements) -> list:
-    """The engines a scan may use: the first N configured ones on plans with an engine limit."""
-    return engines if ent.engines is None else engines[: ent.engines]
+    """The engines a scan may use: none the plan locks, and the first N on plans with an engine limit."""
+    allowed = [e for e in engines if e.key not in ent.locked_engines]
+    return allowed if ent.engines is None else allowed[: ent.engines]
+
+
+def check_engine_choice(ent: Entitlements, keys: list[str]) -> None:
+    """A project's engine choice must fit the plan: no locked engines, no more than the plan's count."""
+    locked = [k for k in keys if k in ent.locked_engines]
+    if locked:
+        raise AppError(402, "PLAN_LIMIT", "Claude, Grok and Google AI Mode are on paid plans.", limit="engines")
+    if ent.engines is not None and len(keys) > ent.engines:
+        raise AppError(402, "PLAN_LIMIT", f"The free scan uses up to {ent.engines} AI engines. Paid plans use all of them.", limit="engines")
+
+
+def require_pro(ent: Entitlements, label: str) -> None:
+    """Paid-plan features. The free trial shows them, locked, so people know what they get by upgrading."""
+    require_active(ent)
+    if not ent.pro:
+        raise AppError(402, "PLAN_LIMIT", f"{label} {'are' if label.endswith('s') else 'is'} on paid plans, from $20 a month.", limit="pro")
 
 
 def require_active(ent: Entitlements) -> None:

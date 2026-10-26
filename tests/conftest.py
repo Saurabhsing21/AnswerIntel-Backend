@@ -19,6 +19,19 @@ def rate_limits_off(monkeypatch):
 def no_network_site_audit(monkeypatch):
     """Scans audit the brand's website; tests must never reach the real internet."""
     monkeypatch.setattr("app.opportunities.site_audit.safe_get", lambda url, **kwargs: None)
+    monkeypatch.setattr("app.diagnosis.service.safe_get", lambda url, **kwargs: None)
+    monkeypatch.setattr("app.onboarding.router.safe_get", lambda url, **kwargs: None)
+    monkeypatch.setattr("app.logos.router.fetch_logo", lambda domain: (None, ""))
+
+
+@pytest.fixture(autouse=True)
+def outbox(monkeypatch):
+    """Every email (account, billing, alerts) lands here instead of going out through Resend."""
+    sent: list[dict] = []
+    capture = lambda to, subject, html: sent.append({"to": to, "subject": subject, "html": html})  # noqa: E731
+    monkeypatch.setattr("app.auth.links.send_report_email", capture)
+    monkeypatch.setattr("app.billing.emails.send_report_email", capture)  # billing, alerts, "scan ready", free follow-ups
+    return sent
 
 
 @pytest.fixture(autouse=True)
@@ -29,13 +42,13 @@ def no_backoff_waiting(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def paid_workspaces(monkeypatch):
-    """There is no free plan, so every workspace a test creates starts on paid Pro (as if Checkout ran).
+    """Every workspace a test creates starts on paid Pro (as if Checkout ran).
     Billing tests that need an unpaid workspace undo this with the `unpaid_signups` fixture."""
     from app.billing import service
     from app.billing.models import Subscription
 
     real = service.open_billing
-    monkeypatch.setattr(service, "open_billing", lambda session, workspace_id: session.add(
+    monkeypatch.setattr(service, "open_billing", lambda session, workspace_id, trial=False: session.add(
         Subscription(workspace_id=workspace_id, plan="pro", interval="month", status="active")
     ))
     return real
@@ -43,6 +56,15 @@ def paid_workspaces(monkeypatch):
 
 @pytest.fixture
 def unpaid_signups(monkeypatch, paid_workspaces):
+    """New workspaces with no plan at all (not even the free trial)."""
+    from app.billing import service
+
+    monkeypatch.setattr(service, "open_billing", lambda session, workspace_id, trial=False: paid_workspaces(session, workspace_id))
+
+
+@pytest.fixture
+def trial_signups(monkeypatch, paid_workspaces):
+    """New accounts start on the free trial, as in production."""
     from app.billing import service
 
     monkeypatch.setattr(service, "open_billing", paid_workspaces)

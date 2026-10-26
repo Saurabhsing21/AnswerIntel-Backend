@@ -23,7 +23,7 @@ def _render(heading: str, body: str) -> str:
     return (
         '<!doctype html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:560px">'
         f"<h2>{escape(heading)}</h2><p>{escape(body)}</p>"
-        f'<p><a href="{escape(link)}">Open SeenLens billing</a></p></body></html>'
+        f'<p><a href="{escape(link)}">Open SeenLens</a></p></body></html>'
     )
 
 
@@ -82,3 +82,51 @@ def send_trial_notices(now: datetime) -> dict:
             counts[notice] += 1
             session.commit()
     return counts
+
+
+# Free-trial follow-ups, one step a day apart at most: (notice, days after signup). Stops once they pay.
+FREE_STEPS = (("free_day1", 1), ("free_day3", 3), ("free_day7", 7))
+
+
+def _free_email(step: str, scanned: bool) -> tuple[str, str]:
+    if step == "free_day1":
+        if not scanned:
+            return "Your free AI visibility scan is waiting", (
+                "Add your website and we'll ask ChatGPT, Perplexity and Gemini the questions your buyers ask, then show "
+                "where they recommend you and who they pick instead. It takes about two minutes."
+            )
+        return "Start with the top fix from your scan", (
+            "Your scan found the questions where AI recommends a competitor instead of you. Open Opportunities: each one "
+            "has concrete steps, and you can re-test the questions after you ship the fix."
+        )
+    if step == "free_day3":
+        return "AI answers change every week", (
+            "One scan is a snapshot. On a plan, SeenLens re-asks every question weekly, emails you when a competitor "
+            "overtakes you, and proves which fixes worked. Plans start at $20 a month."
+        )
+    return "Keep tracking your AI visibility", (
+        "Your free scan and its results are still here. Choose a plan to track them weekly and see whether your "
+        "changes move the numbers."
+    )
+
+
+def send_free_nudges(now: datetime) -> dict:
+    """Daily job. A free workspace gets each follow-up once, in order, while it stays on the free trial."""
+    from app.billing.service import scans_ever
+
+    sent = {step: 0 for step, _ in FREE_STEPS}
+    order = [step for step, _ in FREE_STEPS]
+    with SessionLocal() as session:
+        for sub in session.scalars(select(Subscription).where(Subscription.plan == "free")).all():
+            done = order.index(sub.notified) + 1 if sub.notified in order else 0
+            if done == len(order):
+                continue
+            step, days = FREE_STEPS[done]
+            if sub.created_at > now - timedelta(days=days):
+                continue
+            subject, body = _free_email(step, scans_ever(session, sub.workspace_id) > 0)
+            notify_owners(session, sub.workspace_id, subject, body)
+            sub.notified = step
+            sent[step] += 1
+            session.commit()
+    return sent

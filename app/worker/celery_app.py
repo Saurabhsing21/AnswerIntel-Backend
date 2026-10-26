@@ -24,5 +24,6 @@ celery_app.conf.update(
         "requeue-stuck-scans": {"task": "schedules.requeue_stuck", "schedule": crontab(minute="*/10")},
         "purge-expired-data": {"task": "maintenance.purge_expired", "schedule": crontab(hour=3, minute=30)},
         "trial-notices": {"task": "billing.trial_notices", "schedule": crontab(hour=15, minute=0)},
+        "free-nudges": {"task": "billing.free_nudges", "schedule": crontab(hour=15, minute=30)},
     },
 )

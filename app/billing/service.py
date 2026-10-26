@@ -20,11 +20,18 @@ log = logging.getLogger(__name__)
 _NOT_LIVE = ("incomplete", "incomplete_expired", "canceled", "unpaid")
 
 
-def open_billing(session: Session, workspace_id: UUID) -> Subscription:
-    """Billing record for a new workspace. There is no free plan: it can do nothing until Checkout is paid."""
-    sub = Subscription(workspace_id=workspace_id, plan="none", status="none")
+def open_billing(session: Session, workspace_id: UUID, trial: bool = False) -> Subscription:
+    """Billing record for a new workspace: the free trial for a new account's own workspace, otherwise no plan
+    (it can do nothing until Checkout is paid)."""
+    sub = Subscription(workspace_id=workspace_id, plan="free" if trial else "none", status="active" if trial else "none")
     session.add(sub)
     return sub
+
+
+def scans_ever(session: Session, workspace_id: UUID) -> int:
+    return session.scalar(
+        select(func.count()).select_from(Scan).join(Project, Project.id == Scan.project_id).where(Project.workspace_id == workspace_id)
+    ) or 0
 
 
 def scans_today(session: Session, workspace_id: UUID, now: datetime | None = None, days: int = 1) -> int:
@@ -77,6 +84,7 @@ def usage(session: Session, workspace_id: UUID) -> dict:
         "seats": seat_count(session, workspace_id),
         "scans_today": scans_today(session, workspace_id),
         "scans_30_days": scans_today(session, workspace_id, days=30),
+        "scans_total": scans_ever(session, workspace_id),
         "answers_30_days": answers_used(session, workspace_id),
         "active_prompts": active_prompts(session, workspace_id),
         "per_project": [

@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi.responses import JSONResponse
@@ -32,7 +32,26 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="SeenLens API", lifespan=lifespan)
+# No public API docs in production or while only the waitlist is open.
+_hide_docs = settings.app_env == "production" or settings.waitlist_only
+app = FastAPI(
+    title="SeenLens API",
+    lifespan=lifespan,
+    docs_url=None if _hide_docs else "/docs",
+    redoc_url=None if _hide_docs else "/redoc",
+    openapi_url=None if _hide_docs else "/openapi.json",
+)
+
+# While only the waitlist is open, every other API route answers 404 (health checks stay up).
+WAITLIST_ONLY_OPEN = {"/api/v1/waitlist"}
+
+
+@app.middleware("http")
+async def waitlist_only_gate(request: Request, call_next):
+    if settings.waitlist_only and request.url.path.startswith("/api/") and request.url.path not in WAITLIST_ONLY_OPEN:
+        return JSONResponse(status_code=404, content={"error": {"code": "NOT_FOUND", "message": "Not found."}, "detail": "Not found."})
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,

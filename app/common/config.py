@@ -4,6 +4,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     app_env: str = "development"
+    # Launch mode: only the waitlist endpoint answers; every other API route is 404 (the website is the product).
+    waitlist_only: bool = False
     sentry_dsn: str = ""  # empty = error monitoring off
 
     database_url: str
@@ -16,24 +18,20 @@ class Settings(BaseSettings):
     # AI gateway. Empty key = simulated provider (clearly labelled in the API and UI).
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    # engine_key=openrouter/model-slug, comma separated. Keys map to display names.
-    # Small models on purpose: every plan's monthly answer cap is priced for them (app/billing/plans.py).
-    scan_engines: str = (
-        "chatgpt=openai/gpt-5.4-nano,"
-        "perplexity=perplexity/sonar,"
-        "gemini=google/gemini-3.1-flash-lite"
-    )
-    # Engines that search the web before answering, as their consumer apps do (Perplexity always searches).
-    web_search_engines: str = "chatgpt,gemini"
+    # Swap an engine's model without a code change: "claude=anthropic/claude-sonnet-4.5,grok=x-ai/grok-4". The engines
+    # themselves are listed in app/providers/models.py.
+    engine_models: str = ""
     # Google AI Mode answers through DataForSEO's SERP API. Empty login = the engine is off.
     dataforseo_login: str = ""
     dataforseo_password: str = ""
 
     # Free website check: a few unbranded prompts on two engines (about $0.09 each). The daily cap bounds cost.
+    # Off until launch: while off the public endpoint answers 404, so nobody can run paid AI calls through it.
+    free_check_enabled: bool = False
     free_checks_per_day: int = 100
     free_checks_per_client: int = 3
     free_check_prompts: int = 5
-    free_check_engines: str = "chatgpt,perplexity"
+    free_check_engines: str = "chatgpt_search,perplexity"
     prompt_model: str = "openai/gpt-5.4-mini"  # one call per project, so quality wins here
     analysis_model: str = "openai/gpt-5.4-nano"  # runs on every answer
     provider_timeout_seconds: float = 90
@@ -59,6 +57,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
 
     # Report email delivery (Resend). Empty key = sending is disabled and the API says so.
+    # Google Identity Services web client ID. Empty = "Continue with Google" is hidden.
+    google_client_id: str = ""
     resend_api_key: str = ""
     email_from: str = "SeenLens <reports@seenlens.com>"
 
@@ -86,6 +86,10 @@ class Settings(BaseSettings):
         # Billing on without a webhook secret would take payments that never reach the workspace's plan.
         if self.app_env == "production" and self.stripe_secret_key and not self.stripe_webhook_secret:
             raise ValueError("STRIPE_WEBHOOK_SECRET is required when STRIPE_SECRET_KEY is set and APP_ENV=production.")
+        # Without a key every scan is simulated and prompts come from templates: never acceptable for paying users.
+        # The waitlist-only launch site has no scans, so it may run without one.
+        if self.app_env == "production" and not self.waitlist_only and not self.openrouter_api_key.strip():
+            raise ValueError("OPENROUTER_API_KEY is required when APP_ENV=production (unless WAITLIST_ONLY=true).")
         return self
 
     @property
