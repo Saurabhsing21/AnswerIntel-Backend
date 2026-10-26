@@ -93,7 +93,7 @@ def test_member_edge_cases(client):
     workspace_id = team(client, owner)
     url = f"{API}/workspaces/{workspace_id}/members"
 
-    assert client.post(url, json={"email": f"ghost-{uuid.uuid4().hex}@example.com"}, headers=owner).json()["error"]["code"] == "USER_NOT_FOUND"
+    assert client.post(url, json={"email": f"ghost-{uuid.uuid4().hex}@example.com"}, headers=owner).json()["invited"] is True
     assert client.post(url, json={"email": member_email}, headers=owner).status_code == 200
     assert client.post(url, json={"email": member_email}, headers=owner).status_code == 409  # already a member
     assert client.post(url, json={"email": member_email, "role": "superuser"}, headers=owner).status_code == 422

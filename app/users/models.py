@@ -23,6 +23,11 @@ class User(Base):
         nullable=False,
     )
 
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    # Set when the owner of the address clicks the link we emailed; accounts made before this existed are verified.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         default=True,

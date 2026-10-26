@@ -48,3 +48,23 @@ def test_waitlist_is_limited_per_ip(client, monkeypatch):
     statuses = [client.post(f"{API}/waitlist", json={"email": fresh_email()}).status_code for _ in range(12)]
     assert statuses[:10] == [200] * 10 and statuses[10:] == [429, 429]
     ratelimit.limiter.reset()
+
+
+def test_new_signup_gets_one_confirmation_email(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr("app.waitlist.email.send_report_email", lambda to, subject, html: sent.append((to, subject)))
+    email = fresh_email()
+    client.post(f"{API}/waitlist", json={"email": email})
+    client.post(f"{API}/waitlist", json={"email": email.upper()})  # joining again sends nothing new
+    assert sent == [(email, "You're on the SeenLens waitlist")]
+
+
+def test_waitlist_only_mode_closes_everything_else(client, monkeypatch):
+    monkeypatch.setattr(settings, "waitlist_only", True)
+    monkeypatch.setattr("app.waitlist.email.send_report_email", lambda *args: None)
+    assert client.post(f"{API}/waitlist", json={"email": fresh_email()}).status_code == 200
+    for method, path in [("post", "/auth/register"), ("post", "/auth/login"), ("get", "/projects"),
+                         ("post", "/free-check"), ("post", "/billing/webhook"), ("get", "/workspaces")]:
+        response = client.post(f"{API}{path}", json={}) if method == "post" else client.get(f"{API}{path}")
+        assert response.status_code == 404, path
+    assert client.get("/health").status_code == 200
