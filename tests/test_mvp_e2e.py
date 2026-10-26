@@ -58,7 +58,7 @@ def test_mvp_loop_end_to_end(client):
     for key in ("mention_rate", "recommendation_rate", "share_of_voice", "citation_rate"):
         assert 0 <= v[key] <= 1
     assert v["recommendation_rate"] <= v["mention_rate"]
-    assert {e["key"] for e in dashboard["engines"]} == {"chatgpt", "perplexity", "gemini"}
+    assert {e["key"] for e in dashboard["engines"]} == {"chatgpt_search", "perplexity", "gemini"}
     assert any(r["is_you"] for r in dashboard["competitors"]) and len(dashboard["competitors"]) == 4
     assert abs(sum(r["share_of_voice"] for r in dashboard["competitors"]) - 1) < 0.01
 

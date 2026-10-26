@@ -3,8 +3,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.providers.models import engines_for_prompt
 from app.billing.plans import engines_for, entitlements, require_active, require_room
-from app.billing.service import answers_used, scans_today
+from app.billing.service import answers_used, scans_ever, scans_today
 from app.common.config import settings
 from app.common.errors import AppError
 from app.projects.models import Project
@@ -26,7 +27,8 @@ class ScanService:
         self.model_registry = model_registry or ModelRegistry()
         self.provider = provider
 
-    def start_scan(self, session: Session, project: Project) -> Scan:
+    def start_scan(self, session: Session, project: Project, prompt_ids: list[int] | None = None, opportunity_id: int | None = None) -> Scan:
+        """A full scan of every active prompt, or with `prompt_ids` a re-test of just those (to check a fix)."""
         ent = entitlements(session, project.workspace_id)
         require_active(ent)
         running = session.scalar(
@@ -34,6 +36,8 @@ class ScanService:
         )
         if running:
             raise AppError(409, "SCAN_ALREADY_RUNNING", "A scan is already running for this project.")
+        require_room(ent, "scans_total", scans_ever(session, project.workspace_id),
+                     "You've used your free scan. Choose a plan to keep tracking.")
         recent = session.scalar(
             select(func.count()).select_from(Scan).where(
                 Scan.project_id == project.id, Scan.created_at >= datetime.now(timezone.utc) - timedelta(days=1)
@@ -43,14 +47,13 @@ class ScanService:
             raise AppError(429, "SCAN_LIMIT_REACHED", "Daily scan limit reached for this project. Try again tomorrow.")
         message = f"Your plan includes {ent.scans_per_day} scans a day across the workspace. Try again tomorrow."
         require_room(ent, "scans_per_day", scans_today(session, project.workspace_id), message, "SCAN_LIMIT_REACHED", 429)
-        active = session.scalar(
-            select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
-        ) or 0
-        if not active:
+        chosen = Prompt.id.in_(prompt_ids) if prompt_ids else Prompt.is_active
+        active_choices = session.scalars(select(Prompt.engines).where(Prompt.project_id == project.id, chosen)).all()
+        if not active_choices:
             raise AppError(409, "NO_ACTIVE_PROMPTS", "Generate or add prompts before starting a scan.")
         # The monthly answer cap is what bounds model cost: refuse a scan that would go over it.
-        engines = engines_for(self.model_registry.get_all(), ent)
-        needed = active * len(engines)
+        engines = engines_for(self.model_registry.for_project(project.engines), ent)
+        needed = sum(len(engines_for_prompt(engines, choice)) for choice in active_choices)
         left = max(0, ent.answers_per_month - answers_used(session, project.workspace_id))
         if needed > left:
             raise AppError(
@@ -60,11 +63,11 @@ class ScanService:
                 limit="answers_per_month",
             )
 
-        scan = Scan(project_id=project.id, status="queued")
+        scan = Scan(project_id=project.id, status="queued", kind="retest" if prompt_ids else "full", opportunity_id=opportunity_id)
         session.add(scan)
         session.flush()
-        snapshots = self.prompt_discovery.snapshot_for_scan(session, project, scan.id)
-        scan.total_runs = len(snapshots) * len(engines)
+        snapshots = self.prompt_discovery.snapshot_for_scan(session, project, scan.id, prompt_ids)
+        scan.total_runs = sum(len(engines_for_prompt(engines, sp.engines)) for sp in snapshots)
         return scan
 
     def run(self, scan_id: int) -> None:

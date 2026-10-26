@@ -16,6 +16,8 @@ OPPORTUNITY_TYPES = (
     "TECHNICAL_GAP",
 )
 OPPORTUNITY_STATUSES = ("open", "in_progress", "completed", "dismissed")
+# new: first seen this scan; open: same as last scan; better/worse: fewer/more prompts affected; resolved: gone this scan.
+OPPORTUNITY_TRENDS = ("new", "open", "better", "worse", "resolved")
 
 
 class Opportunity(Base):
@@ -35,6 +37,11 @@ class Opportunity(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     evidence: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="open", server_default="open")
+    # The same gap across scans shares a fingerprint, so its status and history carry forward (see service.py).
+    fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    trend: Mapped[str] = mapped_column(String(20), nullable=False, default="new", server_default="new")  # OPPORTUNITY_TRENDS
+    first_seen_scan_id: Mapped[int | None] = mapped_column(nullable=True)
+    experiment_id: Mapped[int | None] = mapped_column(ForeignKey("experiments.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

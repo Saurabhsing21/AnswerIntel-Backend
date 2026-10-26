@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 
+from app.billing.plans import entitlements
 from app.metrics.stats import margin, significant
 from app.analysis.models import Citation, CompetitorObservation, Mention
 from app.auth.dependencies import get_current_user
@@ -15,7 +16,7 @@ from app.metrics.models import CompetitorMetric, MetricSnapshot
 from app.metrics.service import load_observations
 from app.opportunities.models import Opportunity
 from app.opportunities.router import serialize as serialize_opportunity
-from app.opportunities.service import IMPACT_ORDER
+from app.opportunities.service import BRANDED_CATEGORIES, IMPACT_ORDER, weekly_plan
 from app.prompts.models import Prompt, ScanPrompt
 from app.providers.models import DISPLAY_NAMES
 from app.providers.response_model import AIResponseRecord
@@ -55,7 +56,7 @@ def build_dashboard(session, project) -> dict:
     active_prompts = session.scalar(
         select(func.count()).select_from(Prompt).where(Prompt.project_id == project.id, Prompt.is_active)
     ) or 0
-    latest_scan = session.scalar(select(Scan).where(Scan.project_id == project.id).order_by(Scan.id.desc()))
+    latest_scan = session.scalar(select(Scan).where(Scan.project_id == project.id, Scan.kind == "full").order_by(Scan.id.desc()))
     history = _snapshots(session, project.id)
 
     base = {
@@ -66,7 +67,7 @@ def build_dashboard(session, project) -> dict:
     }
     if not history:
         return {**base, "has_data": False, "visibility": None, "engines": [], "competitors": [],
-                "trend": [], "top_opportunities": [], "recent_answers": []}
+                "trend": [], "top_opportunities": [], "this_week": {"items": [], "done": 0}, "recent_answers": []}
 
     snapshot, scan = history[-1]
     previous = history[-2].MetricSnapshot if len(history) > 1 else None
@@ -86,13 +87,15 @@ def build_dashboard(session, project) -> dict:
         for k in rates
     }
 
+    visibility["by_question"] = question_split(load_observations(session, scan.id))
+
     comp_metrics = {m.competitor_id: m for m in session.scalars(select(CompetitorMetric).where(CompetitorMetric.scan_id == scan.id))}
     brand_citations = session.scalar(
         select(func.count()).select_from(Citation).join(AIResponseRecord, AIResponseRecord.id == Citation.ai_response_id)
         .where(AIResponseRecord.scan_id == scan.id, Citation.is_brand_owned)
     ) or 0
     competitor_rows = [{
-        "id": None, "name": project.brand_name, "is_you": True,
+        "id": None, "name": project.brand_name, "is_you": True, "website": project.website,
         "mention_rate": snapshot.mention_rate, "recommendation_rate": snapshot.recommendation_rate,
         "share_of_voice": snapshot.share_of_voice, "average_position": snapshot.average_position,
         "citation_count": brand_citations,
@@ -101,7 +104,7 @@ def build_dashboard(session, project) -> dict:
         m = comp_metrics.get(c.id)
         if m:
             competitor_rows.append({
-                "id": c.id, "name": c.name, "is_you": False, "mention_rate": m.mention_rate,
+                "id": c.id, "name": c.name, "is_you": False, "website": c.website, "mention_rate": m.mention_rate,
                 "recommendation_rate": m.recommendation_rate, "share_of_voice": m.share_of_voice,
                 "average_position": m.average_position, "citation_count": m.citation_count,
             })
@@ -116,10 +119,12 @@ def build_dashboard(session, project) -> dict:
                 k: getattr(cm, k) for k in ("mention_rate", "recommendation_rate", "share_of_voice")
             }
 
-    opportunities = session.scalars(
-        select(Opportunity).where(Opportunity.scan_id == scan.id, Opportunity.status.in_(("open", "in_progress")))
-    ).all()
-    opportunities = sorted(opportunities, key=lambda o: (IMPACT_ORDER.get(o.impact, 9), -o.confidence))[:5]
+    current = session.scalars(select(Opportunity).where(Opportunity.scan_id == scan.id)).all()
+    plan = weekly_plan(current)
+    opportunities = sorted(
+        [o for o in current if o.status in ("open", "in_progress") and o.trend != "resolved"],
+        key=lambda o: (IMPACT_ORDER.get(o.impact, 9), -o.confidence),
+    )[:5]
 
     recent = session.execute(
         select(AIResponseRecord, Mention).join(Mention, Mention.ai_response_id == AIResponseRecord.id)
@@ -139,6 +144,7 @@ def build_dashboard(session, project) -> dict:
             "competitors": competitor_trend.get(s.id, {}),
         } for m, s in history],
         "top_opportunities": [serialize_opportunity(o) for o in opportunities],
+        "this_week": {"items": [serialize_opportunity(o) for o in plan], "done": sum(o.status == "completed" for o in plan)},
         "recent_answers": [{
             "id": r.AIResponseRecord.id, "engine": r.AIResponseRecord.engine,
             "engine_name": _engine_name(r.AIResponseRecord.engine), "prompt": r.AIResponseRecord.prompt,
@@ -146,6 +152,26 @@ def build_dashboard(session, project) -> dict:
             "created_at": r.AIResponseRecord.created_at,
         } for r in recent],
     }
+
+
+FREE_VISIBLE = 3  # rows of sources and opportunities the free trial sees in full
+
+
+def question_split(observations) -> dict:
+    """Mention and recommendation rates on open category questions vs questions that name a brand. Naming a brand
+    nearly guarantees a mention, so the category numbers are the honest measure of visibility."""
+    out = {}
+    for key, rows in (
+        ("category", [o for o in observations if o.category not in BRANDED_CATEGORIES]),
+        ("named", [o for o in observations if o.category in BRANDED_CATEGORIES]),
+    ):
+        n = len(rows)
+        out[key] = {
+            "responses": n,
+            "mention_rate": round(sum(o.brand["mentioned"] for o in rows) / n, 4) if n else None,
+            "recommendation_rate": round(sum(o.brand["recommended"] for o in rows) / n, 4) if n else None,
+        }
+    return out
 
 
 @router.get("/dashboard")
@@ -249,6 +275,11 @@ def citations(project_id: UUID, scan_id: int | None = None, current_user: User =
             r["with_competitors"] = [{"name": n, "count": k} for n, k in r["with_competitors"].most_common()]
             r["urls"] = sorted(r["urls"])[:5]
             r["group"] = "both" if r["with_you"] and r["with_competitors"] else "you" if r["with_you"] else "competitors"
+            r["locked"] = False
+        if not entitlements(session, project.workspace_id).pro:
+            # The free trial sees its top sources; the rest are counted but not named.
+            for r in sources[FREE_VISIBLE:]:
+                r.update(domain=f"locked-{sources.index(r)}", owner=None, urls=[], with_competitors=[], locked=True)
         return {"scan_id": target, "sources": sources}
 
 

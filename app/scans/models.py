@@ -22,6 +22,10 @@ class Scan(Base):
         index=True,
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued")
+    # "full" = every active prompt; "retest" = only one opportunity's prompts, to check a fix. Retests never feed the
+    # dashboard, trends, opportunities or alerts.
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="full", server_default="full")
+    opportunity_id: Mapped[int | None] = mapped_column(nullable=True)
     provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     total_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     completed_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")

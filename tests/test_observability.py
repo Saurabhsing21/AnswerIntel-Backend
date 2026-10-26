@@ -84,5 +84,12 @@ def test_production_refuses_weak_jwt_secrets(secret):
 
 def test_production_accepts_a_strong_secret_and_development_stays_flexible():
     strong = "k9Xv2mQ8rT5wZ1pL7nB4cD6fG3hJ0sA9"
-    assert Settings(_env_file=None, database_url="postgresql+psycopg://x", jwt_secret_key=strong, app_env="production")
+    assert Settings(_env_file=None, database_url="postgresql+psycopg://x", jwt_secret_key=strong, app_env="production", openrouter_api_key="sk-or-x")
     assert Settings(_env_file=None, database_url="postgresql+psycopg://x", jwt_secret_key="dev", app_env="development")
+
+
+def test_production_needs_an_ai_key_unless_it_only_serves_the_waitlist():
+    strong = "k9Xv2mQ8rT5wZ1pL7nB4cD6fG3hJ0sA9"
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
+        Settings(_env_file=None, database_url="postgresql+psycopg://x", jwt_secret_key=strong, app_env="production")
+    assert Settings(_env_file=None, database_url="postgresql+psycopg://x", jwt_secret_key=strong, app_env="production", waitlist_only=True)

@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.prompts.generator import VALID_CATEGORIES
-from app.providers.registry import V1_MODELS
+from app.providers.models import V1_MODELS
 
 
 client = TestClient(app)

@@ -2,7 +2,7 @@
 
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.billing.emails import notify_owners
@@ -40,5 +40,81 @@ def alert_on_drop(session: Session, scan: Scan) -> bool:
     notify_owners(
         session, project.workspace_id, f"AI visibility dropped for {project.brand_name}",
         " ".join(lines) + " Open SeenLens to see which questions you lost and who AI recommends instead.",
+    )
+    return True
+
+
+def overtakes(session: Session, scan: Scan) -> list[tuple[str, str]]:
+    """(prompt, competitor) pairs: questions where you were recommended last scan, and a competitor is now
+    recommended while you are not, on any engine."""
+    from app.analysis.models import CompetitorObservation, Mention
+    from app.competitors.models import Competitor
+    from app.prompts.models import ScanPrompt
+    from app.providers.response_model import AIResponseRecord
+
+    previous = session.scalar(
+        select(MetricSnapshot.scan_id).where(MetricSnapshot.project_id == scan.project_id, MetricSnapshot.scan_id < scan.id)
+        .order_by(MetricSnapshot.scan_id.desc())
+    )
+    if previous is None:
+        return []
+
+    def by_prompt(scan_id: int) -> tuple[dict[str, bool], dict[str, set[int]]]:
+        you: dict[str, bool] = {}
+        rivals: dict[str, set[int]] = {}
+        rows = session.execute(
+            select(ScanPrompt.text, Mention.recommended, AIResponseRecord.id)
+            .join(AIResponseRecord, AIResponseRecord.scan_prompt_id == ScanPrompt.id)
+            .join(Mention, Mention.ai_response_id == AIResponseRecord.id)
+            .where(ScanPrompt.scan_id == scan_id)
+        ).all()
+        response_prompt = {rid: text for text, _, rid in rows}
+        for text, recommended, _ in rows:
+            you[text] = you.get(text, False) or recommended
+        for o in session.scalars(select(CompetitorObservation).where(
+            CompetitorObservation.ai_response_id.in_(list(response_prompt)), CompetitorObservation.recommended
+        )):
+            rivals.setdefault(response_prompt[o.ai_response_id], set()).add(o.competitor_id)
+        return you, rivals
+
+    before, _ = by_prompt(previous)
+    now, rivals = by_prompt(scan.id)
+    names = {c.id: c.name for c in session.scalars(select(Competitor).where(Competitor.project_id == scan.project_id))}
+    return [
+        (text, names[cid])
+        for text, was in before.items()
+        if was and text in now and not now[text]
+        for cid in sorted(rivals.get(text, set())) if cid in names
+    ]
+
+
+def alert_on_overtake(session: Session, scan: Scan) -> bool:
+    found = overtakes(session, scan)
+    if not found:
+        return False
+    project = session.get(Project, scan.project_id)
+    lines = "; ".join(f'{name} on "{text}"' for text, name in found[:5])
+    more = f" and {len(found) - 5} more" if len(found) > 5 else ""
+    notify_owners(
+        session, project.workspace_id, f"A competitor overtook {project.brand_name}",
+        f"AI used to recommend {project.brand_name} on these questions and now recommends a competitor instead: {lines}{more}. "
+        "Open SeenLens to see the answers and the fix.",
+    )
+    return True
+
+
+def notify_first_scan(session: Session, scan: Scan) -> bool:
+    """Tells the owners their first scan of a project is ready (it takes a few minutes, so people leave)."""
+    full_scans = session.scalar(
+        select(func.count()).select_from(Scan).where(Scan.project_id == scan.project_id, Scan.kind == "full", Scan.id <= scan.id)
+    )
+    snapshot = session.scalar(select(MetricSnapshot).where(MetricSnapshot.scan_id == scan.id))
+    if full_scans != 1 or not snapshot:
+        return False
+    project = session.get(Project, scan.project_id)
+    notify_owners(
+        session, project.workspace_id, f"Your first scan of {project.brand_name} is ready",
+        f"AI mentioned {project.brand_name} in {round(snapshot.mention_rate * 100)}% of {snapshot.total_responses} answers "
+        f"and recommended it in {round(snapshot.recommendation_rate * 100)}%. Open SeenLens to see who it picks instead, and what to fix first.",
     )
     return True

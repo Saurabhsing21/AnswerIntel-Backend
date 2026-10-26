@@ -12,6 +12,7 @@ from app.analysis.models import Citation, CompetitorObservation, Mention
 from app.common.access import get_owned_project
 from app.competitors.models import Competitor
 from app.common.database import SessionLocal
+from app.billing.plans import entitlements, require_pro
 from app.common.errors import AppError
 from app.prompts.models import ScanPrompt
 from app.providers.response_model import AIResponseRecord
@@ -32,6 +33,8 @@ def serialize(scan: Scan) -> dict:
         "id": scan.id,
         "project_id": str(scan.project_id),
         "status": scan.status,
+        "kind": scan.kind,  # "retest" = only one opportunity's prompts
+        "opportunity_id": scan.opportunity_id,
         "provider": scan.provider,
         "simulated": scan.provider == "simulated",
         "total_runs": scan.total_runs,
@@ -61,6 +64,9 @@ def create_scan(
 ):
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
+        if current_user.email_verified_at is None and entitlements(session, project.workspace_id).plan == "free":
+            # The free scan costs real money: one per confirmed inbox, not one per throwaway address.
+            raise AppError(403, "EMAIL_NOT_VERIFIED", "Confirm your email to run your free scan. We sent you a link.")
         scan = ScanService().start_scan(session=session, project=project)
         session.commit()
         session.refresh(scan)
@@ -154,6 +160,7 @@ def export_scan_csv(project_id: UUID, scan_id: int, current_user: User = Depends
     """Every answer of a scan as one spreadsheet row: the raw material behind the dashboard."""
     with SessionLocal() as session:
         scan = get_owned_scan(session, project_id, scan_id, current_user.id)
+        require_pro(entitlements(session, get_owned_project(session, project_id, current_user.id).workspace_id), "CSV exports")
         names = {c.id: c.name for c in session.scalars(select(Competitor).where(Competitor.project_id == scan.project_id))}
         rows = session.execute(
             select(AIResponseRecord, ScanPrompt, Mention)

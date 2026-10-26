@@ -9,6 +9,7 @@ from app.analysis.base import AnalysisContext
 from app.analysis.service import ResponseAnalysisService
 from app.common.config import settings
 from app.common.database import SessionLocal
+from app.diagnosis import service as diagnosis
 from app.freecheck.models import FreeCheck
 from app.prompts.generator import PromptInput, TemplatePromptGenerator, generate_prompts
 from app.providers.base import ProviderContext
@@ -64,6 +65,7 @@ def _check(brand: str, website: str, category: str, country: str) -> dict:
 
     rows: dict[str, list[dict]] = {p: [] for p in prompts}
     sources: Counter = Counter()
+    missed: list[tuple[str, list[dict]]] = []
     for item in done:
         if item is None:
             continue
@@ -74,6 +76,8 @@ def _check(brand: str, website: str, category: str, country: str) -> dict:
             "position": v["position"]["position"], "evidence": v["recommendation"].get("evidence"),
         })
         sources.update({c["domain"] for c in v["citations"] if c.get("domain")})
+        if not v["mention"]["mentioned"]:
+            missed.append((prompt, v["citations"]))
     answers = [a for row in rows.values() for a in row]
     return {
         "prompts": [{"text": p, "answers": rows[p]} for p in prompts],
@@ -84,8 +88,20 @@ def _check(brand: str, website: str, category: str, country: str) -> dict:
             "engines": [e.display_name for e in engines],
         },
         "top_sources": [{"domain": d, "count": n} for d, n in sources.most_common(5)],
+        "why": _safe(_why, website, [e.key for e in engines], missed) or [],
         "simulated": provider.name == "simulated",
     }
+
+
+def _why(website: str, engines: list[str], missed: list[tuple[str, list[dict]]]) -> list[dict]:
+    """The top reasons the brand was missed, from the same checks the app runs on each answer."""
+    causes = {c["title"]: c for c in (diagnosis.technical(website, e, diagnosis.cached_fetch) for e in engines) if c}
+    for prompt, citations in missed:
+        page = diagnosis.no_answer_page(website, prompt, citations, diagnosis.cached_fetch)
+        if page:
+            causes[page["title"]] = {**page, "detail": f'Nothing on your site answers "{prompt}".'}
+            break
+    return list(causes.values())[:3]
 
 
 def _safe(fn, *args):

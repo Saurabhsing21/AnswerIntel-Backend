@@ -61,6 +61,10 @@ def build_content(session: Session, project: Project) -> tuple[dict, int]:
         "engines": data["engines"],
         "competitors": data["competitors"],
         "top_opportunities": opportunities,
+        "this_week": [
+            {"title": o["title"], "steps": o["steps"][:3], "effort": o["effort"], "status": o["status"]}
+            for o in data["this_week"]["items"]
+        ],
         "trend": data["trend"],
         "summary": summarize(project.brand_name, data["visibility"], data["competitors"], opportunities),
     }

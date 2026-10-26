@@ -12,13 +12,15 @@ from app.analysis.base import AnalysisContext
 from app.analysis.persistence import save_analysis
 from app.analysis.service import ResponseAnalysisService
 from app.billing.plans import engines_for, entitlements
+from app.providers.models import engines_for_prompt
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.database import engine as db_engine
 from app.competitors.models import Competitor
-from app.metrics.alerts import alert_on_drop
+from app.metrics.alerts import alert_on_drop, alert_on_overtake, notify_first_scan
 from app.metrics.service import compute_and_store
 from app.opportunities.service import generate_and_store
+from app.opportunities.retest import finish_retest
 from app.opportunities.site_audit import audit_site
 from app.projects.models import Project
 from app.prompts.models import ScanPrompt
@@ -89,15 +91,15 @@ class ScanExecutionService:
             prompts = session.scalars(
                 select(ScanPrompt).where(ScanPrompt.scan_id == scan.id).order_by(ScanPrompt.id)
             ).all()
-            engines = engines_for(self.model_registry.get_all(), entitlements(session, project.workspace_id))
+            engines = engines_for(self.model_registry.for_project(project.engines), entitlements(session, project.workspace_id))
 
             analysis_context = AnalysisContext(
-                brand_name=project.brand_name,
+                brand_name=project.brand_name.strip(),
                 competitors=[{"id": c.id, "name": c.name, "website": c.website} for c in competitors],
                 brand_website=project.website,
             )
             provider_context = ProviderContext(
-                brand_name=project.brand_name,
+                brand_name=project.brand_name.strip(),
                 competitors=[c.name for c in competitors],
                 brand_website=project.website,
                 variation=scan.id,
@@ -113,7 +115,7 @@ class ScanExecutionService:
             scan.status = "running"
             scan.started_at = scan.started_at or datetime.now(timezone.utc)
             scan.provider = self.provider.name
-            scan.total_runs = len(prompts) * len(engines)
+            scan.total_runs = sum(len(engines_for_prompt(engines, p.engines)) for p in prompts)
             scan.completed_runs = len(done)  # a resumed scan keeps the answers it already stored
             scan.failed_runs = 0
             session.commit()
@@ -132,20 +134,24 @@ class ScanExecutionService:
                             raise
                     _backoff(delays[attempt])
 
-            def work(prompt: ScanPrompt, engine):
-                response = ask(prompt.text, engine)
+            # Workers get plain text, never ORM objects: the main thread commits while they run, and touching an
+            # expired object from another thread would hit the session mid-commit.
+            def work(prompt_text: str, engine):
+                response = ask(prompt_text, engine)
                 result = self.analysis_service.analyze(
                     response.text,
-                    replace(analysis_context, prompt=prompt.text),
+                    replace(analysis_context, prompt=prompt_text),
                     citations=response.citations,
                 )
                 return response, result
 
             last_error: str | None = None
-            jobs = [(p.id, p.text, p.category, p.intent, e) for p in prompts for e in engines if (p.id, e.key) not in done]
-            snapshot = {p.id: p for p in prompts}
+            jobs = [
+                (p.id, p.text, p.category, p.intent, e)
+                for p in prompts for e in engines_for_prompt(engines, p.engines) if (p.id, e.key) not in done
+            ]
             with ThreadPoolExecutor(max_workers=max(1, settings.scan_concurrency)) as pool:
-                futures = {pool.submit(work, snapshot[pid], engine): (pid, engine) for pid, _, _, _, engine in jobs}
+                futures = {pool.submit(work, text, engine): (pid, engine) for pid, text, _, _, engine in jobs}
                 for future in as_completed(futures):
                     prompt_id, engine = futures[future]
                     try:
@@ -172,18 +178,21 @@ class ScanExecutionService:
                     scan.completed_runs += 1
                     session.commit()
 
-            if scan.completed_runs:
+            if scan.completed_runs and scan.kind == "full":
                 data = compute_and_store(session, scan)
                 try:
                     audit = audit_site(project.website)
                 except Exception:  # the audit is a bonus signal; it must never fail a scan
                     log.exception("Site audit failed for scan %s", scan.id)
                     audit = None
-                generate_and_store(session, scan, project.brand_name, data["observations"], audit)
-                try:
-                    alert_on_drop(session, scan)
-                except Exception:  # an alert email must never fail a scan
-                    log.exception("Drop alert failed for scan %s", scan.id)
+                generate_and_store(session, scan, project.brand_name.strip(), data["observations"], audit)
+                # Drop and overtake alerts are a paid feature; "your scan is ready" goes to everyone.
+                paid = entitlements(session, project.workspace_id).pro
+                for alert in ((alert_on_drop, alert_on_overtake, notify_first_scan) if paid else (notify_first_scan,)):
+                    try:
+                        alert(session, scan)
+                    except Exception:  # an alert email must never fail a scan
+                        log.exception("%s failed for scan %s", alert.__name__, scan.id)
 
             if scan.failed_runs == 0:
                 scan.status = "completed"
@@ -193,6 +202,8 @@ class ScanExecutionService:
                 scan.status = "failed"
             scan.error_message = last_error if scan.failed_runs else None
             scan.completed_at = datetime.now(timezone.utc)
+            if scan.kind == "retest":
+                finish_retest(session, scan)
             session.commit()
             log.info(
                 "scan finished",

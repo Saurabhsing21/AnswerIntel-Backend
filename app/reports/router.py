@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
+from app.billing.plans import entitlements, require_pro
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -67,6 +68,7 @@ def _export(report: Report, format: str):
 def generate_report(project_id: UUID, payload: ReportCreate | None = None, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
+        require_pro(entitlements(session, project.workspace_id), "Reports")
         report = create_report(session, project, (payload or ReportCreate()).type)
         session.commit()
         session.refresh(report)

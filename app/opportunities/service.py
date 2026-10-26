@@ -1,9 +1,10 @@
 """Opportunity engine (PRD sections 36-40): deterministic rules over stored
 observations. Every opportunity carries the evidence that produced it."""
 
+import re
 from collections import Counter, defaultdict
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.competitors.models import Competitor
@@ -199,6 +200,7 @@ def detect(
             "evidence": {"url": audit["url"], "findings": findings},
         })
 
+    _add_steps(found, observations, brand, competitors)
     for item in found:
         item["evidence"]["expected_objective"] = OBJECTIVES[item["type"]]
 
@@ -209,15 +211,123 @@ def detect(
     return sorted(found, key=lambda x: (IMPACT_ORDER[x["impact"]], -weight(x), -x["confidence"]))
 
 
+EFFORT = {"TECHNICAL_GAP": "S", "POSITIONING_GAP": "S", "ENTITY_GAP": "M", "CITATION_GAP": "M",
+          "COMPARISON_GAP": "M", "COMPETITOR_GAP": "M", "CONTENT_GAP": "L"}
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _domains_behind(observations: list[Observation], winner) -> list[str]:
+    """Third-party domains cited in answers that `winner(o)` says the brand lost, most cited first."""
+    counts: Counter = Counter()
+    for o in observations:
+        if winner(o):
+            counts.update({c["domain"] for c in o.citations if c["domain"] and not c["is_brand_owned"] and not c["competitor_id"]})
+    return [d for d, _ in counts.most_common(3)]
+
+
+def _add_steps(found: list[dict], observations: list[Observation], brand: str, competitors: dict[int, str]) -> None:
+    """Concrete, checkable steps for each opportunity, named from the evidence: exact pages, exact domains."""
+    ids = {name: cid for cid, name in competitors.items()}
+    for item in found:
+        ev, kind = item["evidence"], item["type"]
+        prompts = ev.get("prompts") or []
+        steps: list[str] = []
+        if kind == "COMPETITOR_GAP":
+            name = ev["competitor"]
+            cid = ids.get(name)
+            steps.append(f"Publish a comparison page at /{_slug(brand)}-vs-{_slug(name)} with an honest feature and price table.")
+            if prompts:
+                steps.append(f'Answer "{prompts[0]}" in the first paragraph of that page, in one clear sentence.')
+            domains = _domains_behind(observations, lambda o: o.competitors.get(cid, {}).get("recommended") and not o.brand["mentioned"])
+            if domains:
+                steps.append(f"Get listed or reviewed on {', '.join(domains)}: AI cites them when it recommends {name}.")
+        elif kind == "COMPARISON_GAP":
+            for cid, name in list(competitors.items())[:3]:
+                steps.append(f"Publish /{_slug(brand)}-vs-{_slug(name)}: who each is best for, a feature table, pricing.")
+            steps.append(f"Publish /{_slug(brand)}-alternatives that lists you alongside your competitors.")
+        elif kind == "CITATION_GAP":
+            for d in ev.get("domains", [])[:4]:
+                steps.append(f"Get {brand} listed on {d['domain']}: ask for a review, submit a listing, or pitch the author ({d['citations']} citations).")
+        elif kind == "CONTENT_GAP":
+            for q in prompts[:3]:
+                steps.append(f'Publish a page that answers "{q}" directly, with a short verdict near the top.')
+            steps.append("Link these pages from your homepage and navigation so crawlers find them.")
+        elif kind == "POSITIONING_GAP":
+            steps.append(f'Put one sentence at the top of your homepage: "{brand} is the best <category> for <audience> because <reason>."')
+            steps.append("Add proof AI can quote: customer count, a named customer, and one measurable result.")
+            steps.append("Use the same sentence on G2, Capterra, LinkedIn and Crunchbase.")
+        elif kind == "ENTITY_GAP":
+            steps.append(f"Use one description of what {brand} is, word for word, in your homepage title, meta description and H1.")
+            steps.append("Copy that description to LinkedIn, Crunchbase, G2 and Wikidata so AI links your name to the category.")
+        elif kind == "TECHNICAL_GAP":
+            steps.extend(f["action"] for f in ev.get("findings", []))
+        ev["steps"] = steps
+        ev["effort"] = EFFORT[kind]
+
+
+EFFORT_ORDER = {"S": 0, "M": 1, "L": 2}
+
+
+def weekly_plan(rows: list[Opportunity]) -> list[Opportunity]:
+    """This week's 3 actions: the biggest gaps first, quick wins before big projects. Done ones stay, to show progress."""
+    live = [o for o in rows if o.trend != "resolved" and o.status != "dismissed"]
+    return sorted(live, key=lambda o: (IMPACT_ORDER[o.impact], EFFORT_ORDER.get(o.evidence.get("effort"), 1), -o.confidence))[:3]
+
+
+def fingerprint(item: dict) -> str:
+    """Identity of a gap across scans: its type plus what it is about (a competitor, a prompt category)."""
+    ev = item["evidence"]
+    return f"{item['type']}:{ev.get('competitor') or ev.get('category') or ''}".lower()
+
+
+def _weight(evidence: dict) -> int:
+    return len(evidence.get("prompts") or evidence.get("domains") or evidence.get("findings") or [])
+
+
 def generate_and_store(
     session: Session, scan: Scan, brand: str, observations: list[Observation], audit: dict | None = None
 ) -> list[Opportunity]:
+    """Stores this scan's opportunities, carrying each one's status and history from the previous scan.
+    Gaps that disappeared are stored as "resolved", so the user sees what their work fixed."""
     competitors = {c.id: c.name for c in session.scalars(select(Competitor).where(Competitor.project_id == scan.project_id))}
     session.execute(delete(Opportunity).where(Opportunity.scan_id == scan.id))
-    rows = [
-        Opportunity(project_id=scan.project_id, scan_id=scan.id, **item)
-        for item in detect(observations, brand, competitors, audit)
-    ]
+    previous_scan = session.scalar(
+        select(func.max(Opportunity.scan_id)).where(Opportunity.project_id == scan.project_id, Opportunity.scan_id < scan.id)
+    )
+    previous = {
+        o.fingerprint: o
+        for o in session.scalars(select(Opportunity).where(Opportunity.scan_id == previous_scan, Opportunity.trend != "resolved"))
+    } if previous_scan else {}
+
+    rows = []
+    for item in detect(observations, brand, competitors, audit):
+        fp = fingerprint(item)
+        old = previous.pop(fp, None)
+        row = Opportunity(project_id=scan.project_id, scan_id=scan.id, fingerprint=fp, **item)
+        if old is None:
+            row.trend, row.first_seen_scan_id = "new", scan.id
+        else:
+            before, now = _weight(old.evidence), _weight(item["evidence"])
+            worse = IMPACT_ORDER[item["impact"]] < IMPACT_ORDER[old.impact] or now > before
+            better = IMPACT_ORDER[item["impact"]] > IMPACT_ORDER[old.impact] or now < before
+            row.trend = "worse" if worse else "better" if better else "open"
+            row.status = "open" if old.status == "completed" else old.status  # marked done but still there: back on the list
+            row.first_seen_scan_id = old.first_seen_scan_id or old.scan_id
+            row.experiment_id = old.experiment_id
+            row.evidence = {**item["evidence"], "previous_count": before,
+                            **({"retest": old.evidence["retest"]} if "retest" in old.evidence else {})}
+        rows.append(row)
+    for fp, old in previous.items():  # gone this scan: fixed
+        rows.append(Opportunity(
+            project_id=scan.project_id, scan_id=scan.id, fingerprint=fp, type=old.type, title=old.title,
+            description=old.description, recommended_action=old.recommended_action, impact=old.impact,
+            confidence=old.confidence, evidence=old.evidence, trend="resolved",
+            status="dismissed" if old.status == "dismissed" else "completed",
+            first_seen_scan_id=old.first_seen_scan_id or old.scan_id, experiment_id=old.experiment_id,
+        ))
     session.add_all(rows)
     session.flush()
     return rows

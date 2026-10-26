@@ -97,7 +97,15 @@ def test_opportunity_draft(client):
     assert client.post(f"{API}/projects/{project_id}/opportunities/999999/draft", headers=headers).status_code == 404
 
 
+def test_free_check_is_off_by_default(client, monkeypatch):
+    monkeypatch.setattr(settings, "free_check_enabled", False)
+    body = {"brand_name": "Halden", "website": "halden.co", "category": "CRM software"}
+    assert client.post(f"{API}/free-check", json=body).status_code == 404
+
+
 def test_free_check_runs_reuses_and_is_capped(client, monkeypatch):
+    monkeypatch.setattr(settings, "free_check_enabled", True)
+    monkeypatch.setattr(settings, "free_checks_per_client", 10_000)  # every test run comes from the same address
     site = f"brand-{uuid.uuid4().hex[:8]}.io"
     body = {"brand_name": "Halden", "website": f"https://www.{site}/pricing", "category": "CRM software"}
     started = client.post(f"{API}/free-check", json=body)

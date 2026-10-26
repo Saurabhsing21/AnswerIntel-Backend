@@ -34,7 +34,14 @@ def render_html(content: dict, title: str) -> str:
         f"<td>{_position(c['average_position'])}</td></tr>"
         for c in content["competitors"]
     )
+    effort = {"S": "quick win", "M": "a few hours", "L": "a bigger project"}
+    week = content.get("this_week")  # reports made before the weekly plan existed only have top_opportunities
     actions = "".join(
+        f"<li><strong>{escape(o['title'])}</strong>{' (done)' if o['status'] == 'completed' else ''}"
+        f" <span style=\"color:#666\">· {effort.get(o['effort'] or '', '')}</span>"
+        f"<ul>{''.join(f'<li>{escape(step)}</li>' for step in o['steps'])}</ul></li>"
+        for o in week
+    ) if week else "".join(
         f"<li><strong>{escape(o['title'])}</strong><br>{escape(o['recommended_action'])}</li>"
         for o in content["top_opportunities"]
     )
@@ -55,7 +62,7 @@ th,td{{text-align:left;padding:8px;border-bottom:1px solid #eee}} li{{margin-bot
 <h2>Summary</h2><ul>{summary}</ul>
 <h2>Competitors</h2>
 <table><tr><th>Brand</th><th>Mention</th><th>Recommended</th><th>Share of voice</th><th>Avg. position</th></tr>{rows}</table>
-<h2>What to do next</h2><ol>{actions or '<li>No open opportunities.</li>'}</ol>
+<h2>This week&#39;s 3 actions</h2><ol>{actions or '<li>No open opportunities.</li>'}</ol>
 </main></body></html>"""
 
 

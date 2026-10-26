@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
@@ -13,7 +13,12 @@ from app.common.errors import AppError
 from app.freecheck.models import FreeCheck
 from app.freecheck.service import run_free_check
 
-router = APIRouter(prefix="/free-check", tags=["Free check"])
+def require_enabled() -> None:
+    if not settings.free_check_enabled:
+        raise AppError(404, "NOT_FOUND", "Not found.")
+
+
+router = APIRouter(prefix="/free-check", tags=["Free check"], dependencies=[Depends(require_enabled)])
 
 
 class FreeCheckRequest(BaseModel):
