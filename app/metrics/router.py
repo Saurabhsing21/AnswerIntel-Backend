@@ -12,6 +12,7 @@ from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.competitors.models import Competitor
+from app.logos.router import blurred_preview
 from app.metrics.models import CompetitorMetric, MetricSnapshot
 from app.metrics.service import load_observations
 from app.opportunities.models import Opportunity
@@ -155,6 +156,7 @@ def build_dashboard(session, project) -> dict:
 
 
 FREE_VISIBLE = 3  # rows of sources and opportunities the free trial sees in full
+LOCKED_PREVIEWS = 3  # locked source rows that carry a blurred logo, so the teaser shows real sites
 
 
 def question_split(observations) -> dict:
@@ -278,8 +280,12 @@ def citations(project_id: UUID, scan_id: int | None = None, current_user: User =
             r["locked"] = False
         if not entitlements(session, project.workspace_id).pro:
             # The free trial sees its top sources; the rest are counted but not named.
-            for r in sources[FREE_VISIBLE:]:
-                r.update(domain=f"locked-{sources.index(r)}", owner=None, urls=[], with_competitors=[], locked=True)
+            shown = 0
+            for i, r in enumerate(sources[FREE_VISIBLE:]):
+                # The first few sites that have a logo; sites without one are skipped, not shown as blanks.
+                preview = blurred_preview(r["domain"]) if shown < LOCKED_PREVIEWS and i < 8 else None
+                shown += bool(preview)
+                r.update(domain=f"locked-{sources.index(r)}", owner=None, urls=[], with_competitors=[], locked=True, preview=preview)
         return {"scan_id": target, "sources": sources}
 
 

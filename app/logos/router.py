@@ -4,12 +4,15 @@ The browser asks us, never a third party, so viewers' browsing is not shared; th
 favicon service, which already holds an icon for nearly every public site.
 """
 
+import base64
+import io
 import re
 import time
 
 import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
+from PIL import Image
 
 from app.auth.dependencies import get_current_user
 from app.common.errors import AppError
@@ -44,6 +47,21 @@ def fetch_logo(domain: str) -> tuple[bytes | None, str]:
         _cache.clear()
     _cache[domain] = (time.monotonic(), image, kind)
     return image, kind
+
+
+def blurred_preview(domain: str) -> str | None:
+    """An 8x8 copy of a site's logo as a data URI: enough to show a real logo behind a blur, too small to read."""
+    image, _ = fetch_logo(domain)
+    if not image:
+        return None
+    try:
+        with Image.open(io.BytesIO(image)) as img:
+            small = img.convert("RGBA").resize((8, 8))
+            out = io.BytesIO()
+            small.save(out, format="PNG")
+    except (OSError, ValueError):
+        return None
+    return "data:image/png;base64," + base64.b64encode(out.getvalue()).decode()
 
 
 @router.get("/{domain}")
