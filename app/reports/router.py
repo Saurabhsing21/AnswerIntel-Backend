@@ -15,7 +15,8 @@ from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.reports.email import send_report_email
 from app.reports.models import Report
-from app.reports.render import render_html, render_pdf
+from app.reports.pdf import render_pdf
+from app.reports.render import render_html
 from app.reports.service import create_report, report_title
 from app.users.models import User
 
@@ -60,7 +61,8 @@ def _export(report: Report, format: str):
             headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"},
         )
     if format == "pdf":
-        return Response(render_pdf(report.content, report_title(report)), media_type="application/pdf")
+        period = f"{report.period_start:%d %b} – {report.period_end:%d %b %Y}"
+        return Response(render_pdf(report.content, report_title(report), period), media_type="application/pdf")
     return serialize(report)
 
 
