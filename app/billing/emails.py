@@ -2,13 +2,13 @@
 
 import logging
 from datetime import datetime, timedelta
-from html import escape
 from uuid import UUID
 
 from sqlalchemy import or_, select
 
 from app.billing.models import Subscription
 from app.common.config import settings
+from app.common.email_layout import email_html
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.reports.email import send_report_email
@@ -18,16 +18,10 @@ from app.workspaces.models import Workspace, WorkspaceMember
 log = logging.getLogger(__name__)
 
 
-def _render(heading: str, body: str) -> str:
-    link = f"{settings.app_base_url.rstrip('/')}/projects"
-    return (
-        '<!doctype html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:560px">'
-        f"<h2>{escape(heading)}</h2><p>{escape(body)}</p>"
-        f'<p><a href="{escape(link)}">Open SeenLens</a></p></body></html>'
-    )
-
-
-def notify_owners(session, workspace_id: UUID, subject: str, body: str) -> int:
+def notify_owners(
+    session, workspace_id: UUID, subject: str, body: str, *, path: str = "/projects", button: str = "Open SeenLens",
+    stats: list[tuple[str, str]] | None = None, items: list[str] | None = None,
+) -> int:
     """Returns how many owners were emailed. Email being off or failing never breaks billing."""
     name = session.scalar(select(Workspace.name).where(Workspace.id == workspace_id)) or "Your workspace"
     emails = session.scalars(
@@ -37,7 +31,11 @@ def notify_owners(session, workspace_id: UUID, subject: str, body: str) -> int:
     sent = 0
     for email in emails:
         try:
-            send_report_email(email, subject, _render(f"{name}: {subject}", body))
+            send_report_email(email, subject, email_html(
+                heading=subject, paragraphs=[body], eyebrow=name, stats=stats, items=items, preheader=body,
+                button=(button, f"{settings.app_base_url.rstrip('/')}{path}"),
+                footer=f"You get this because you own {name} on SeenLens.",
+            ))
             sent += 1
         except AppError as exc:
             log.info("Billing email for workspace %s not sent: %s", workspace_id, exc.code)

@@ -39,7 +39,8 @@ def alert_on_drop(session: Session, scan: Scan) -> bool:
     project = session.get(Project, scan.project_id)
     notify_owners(
         session, project.workspace_id, f"AI visibility dropped for {project.brand_name}",
-        " ".join(lines) + " Open SeenLens to see which questions you lost and who AI recommends instead.",
+        "Your latest scan shows AI recommending you less often. See which questions you lost and who AI picks instead.",
+        path=f"/projects/{project.id}", button="See what changed", items=lines,
     )
     return True
 
@@ -93,12 +94,13 @@ def alert_on_overtake(session: Session, scan: Scan) -> bool:
     if not found:
         return False
     project = session.get(Project, scan.project_id)
-    lines = "; ".join(f'{name} on "{text}"' for text, name in found[:5])
-    more = f" and {len(found) - 5} more" if len(found) > 5 else ""
+    items = [f'{name} now wins "{text}"' for text, name in found[:5]]
+    if len(found) > 5:
+        items.append(f"and {len(found) - 5} more questions")
     notify_owners(
         session, project.workspace_id, f"A competitor overtook {project.brand_name}",
-        f"AI used to recommend {project.brand_name} on these questions and now recommends a competitor instead: {lines}{more}. "
-        "Open SeenLens to see the answers and the fix.",
+        f"AI used to recommend {project.brand_name} on these questions and now recommends a competitor instead.",
+        path=f"/projects/{project.id}/opportunities", button="See the answers and the fix", items=items,
     )
     return True
 
@@ -114,7 +116,11 @@ def notify_first_scan(session: Session, scan: Scan) -> bool:
     project = session.get(Project, scan.project_id)
     notify_owners(
         session, project.workspace_id, f"Your first scan of {project.brand_name} is ready",
-        f"AI mentioned {project.brand_name} in {round(snapshot.mention_rate * 100)}% of {snapshot.total_responses} answers "
-        f"and recommended it in {round(snapshot.recommendation_rate * 100)}%. Open SeenLens to see who it picks instead, and what to fix first.",
+        f"We asked AI your buyers' questions {snapshot.total_responses} times. Here is how often it brought up {project.brand_name}, "
+        "who it picks instead, and what to fix first.",
+        path=f"/projects/{project.id}", button="See your results",
+        stats=[(f"{round(snapshot.mention_rate * 100)}%", "mentioned you"),
+               (f"{round(snapshot.recommendation_rate * 100)}%", "recommended you"),
+               (str(snapshot.total_responses), "AI answers")],
     )
     return True

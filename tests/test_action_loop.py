@@ -125,7 +125,7 @@ def test_overtake_lists_questions_a_competitor_took_from_you(client, outbox, mon
     monkeypatch.setattr(alerts, "overtakes", lambda session, scan: [("best crm for startups", "Kiteline")])
     scan_and_wait(client, headers, project_id)
     mail = next(m for m in outbox if m["subject"] == "A competitor overtook Halden")
-    assert "Kiteline on &quot;best crm for startups&quot;" in mail["html"]
+    assert "Kiteline now wins &quot;best crm for startups&quot;" in mail["html"]
 
 
 def test_free_follow_ups_go_out_once_each_in_order(client, outbox, trial_signups):

@@ -7,12 +7,12 @@ link names the address it proves, so it also confirms a change of email.
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
-from html import escape
 
 import jwt
 from jwt.exceptions import InvalidTokenError
 
 from app.common.config import settings
+from app.common.email_layout import email_html
 from app.reports.email import send_report_email
 from app.users.models import User
 
@@ -67,13 +67,7 @@ def link(path: str, token: str) -> str:
 
 
 def render(heading: str, body: str, button: str, url: str, footer: str) -> str:
-    return (
-        '<!doctype html><html><body style="font-family:system-ui,sans-serif;color:#111;max-width:520px;line-height:1.5">'
-        f'<h2 style="font-size:20px">{escape(heading)}</h2><p>{escape(body)}</p>'
-        f'<p><a href="{escape(url)}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;'
-        f'border-radius:999px;text-decoration:none">{escape(button)}</a></p>'
-        f'<p style="color:#666;font-size:13px">{escape(footer)}</p></body></html>'
-    )
+    return email_html(heading=heading, paragraphs=[body], button=(button, url), footer=footer, preheader=body)
 
 
 def send(to: str, subject: str, html: str) -> None:
