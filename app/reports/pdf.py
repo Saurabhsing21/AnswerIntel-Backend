@@ -28,8 +28,8 @@ STATUS = {  # question result -> (label, text colour, fill)
     "mentioned": ("Mentioned only", (71, 85, 105), (241, 245, 249)),
     "absent": ("Missing", (153, 27, 27), (254, 226, 226)),
 }
-SECTIONS = ["Visibility in AI answers", "Competitive landscape", "Results by buyer question",
-            "Sources AI relies on", "Recommended actions", "Methodology and data"]
+SECTIONS = ["Where you stand", "Who AI recommends instead", "Results by buyer question", "Why AI skips you",
+            "Sources AI trusts", "What to do first", "Methodology and data"]
 IMPACT = {"high": DOWN, "medium": AMBER, "low": MUTED}
 EFFORT = {"S": "Quick win", "M": "A few hours", "L": "Bigger project"}
 SOURCE_TYPES = {
@@ -259,7 +259,7 @@ def _cover(pdf: ReportPDF, content: dict, title: str, period: str):
 def _visibility(pdf: ReportPDF, content: dict):
     v = content["visibility"]
     pdf.add_page()
-    pdf.section(1, "Visibility in AI answers", "How often the AI engines name and recommend you, with the change since the previous scan and the margin of error for this sample size.")
+    pdf.section(1, "Where you stand", "How often the AI engines name and recommend you, with the change since the previous scan and the margin of error for this sample size.")
     cols = [("Metric", 44, "L"), ("Value", 18, "R"), ("Change", 24, "R"), ("Margin (95%)", 26, "R"), ("   What it measures", pdf.width - 112, "L")]
     pdf.table_header(cols)
     deltas, margins = v.get("deltas") or {}, v.get("margins") or {}
@@ -333,7 +333,7 @@ def _competitors(pdf: ReportPDF, content: dict):
     rows = content.get("competitors") or []
     if not rows:
         return
-    pdf.section(2, "Competitive landscape", "Every tracked brand in the same answers. Share of voice is each brand's slice of all brand mentions.")
+    pdf.section(2, "Who AI recommends instead", "Every tracked brand in the same answers. Share of voice is each brand's slice of all brand mentions.")
     rest = pdf.width - 50 - 22 - 26 - 22
     pdf.table_header([("Brand", 50, "L"), ("Mentioned", 22, "R"), ("Recommended", 26, "R"), ("Avg. rank", 22, "R"), ("Share of voice", rest, "L")])
     for c in sorted(rows, key=lambda r: r.get("share_of_voice") or 0, reverse=True):
@@ -390,11 +390,36 @@ def _questions(pdf: ReportPDF, content: dict):
         pdf.row_rule()
 
 
+def _why(pdf: ReportPDF, content: dict):
+    why = content.get("why_not_you")
+    if not why:
+        return  # older reports, or no question was lost to a competitor
+    pdf.section(4, "Why AI skips you", "The questions you lost to a competitor, with the reason the engine gave and the sentence from its answer.")
+    for w in why:
+        if pdf.get_y() > pdf.h - 45:
+            pdf.add_page()
+        pdf.font(10, bold=True)
+        pdf.multi_cell(0, 5.2, w["question"], new_x="LMARGIN", new_y="NEXT")
+        said = "only mentioned you" if w.get("mentioned") else "did not name you"
+        reason = f" Why: {w['reason'].rstrip('.')}." if w.get("reason") else ""
+        pdf.font(9.2, color=MUTED)
+        pdf.multi_cell(0, 4.8, f"{w['engine']} recommended {w['winner']} and {said}.{reason}", new_x="LMARGIN", new_y="NEXT")
+        if w.get("quote"):
+            y = pdf.get_y() + 1
+            pdf.set_y(y)
+            pdf.set_x(pdf.l_margin + 4)
+            pdf.font(9)
+            pdf.multi_cell(pdf.width - 4, 4.8, f"\u201c{w['quote'].strip()}\u201d", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_fill_color(*MARK_STRONG)
+            pdf.rect(pdf.l_margin, y, 1.2, pdf.get_y() - y, style="F")
+        pdf.ln(4)
+
+
 def _sources(pdf: ReportPDF, content: dict):
     sources = content.get("sources")
     if sources is None:
         return
-    pdf.section(4, "Sources AI relies on", "The websites the engines cited in this scan. Being present on these sites is one of the strongest levers for being recommended.")
+    pdf.section(5, "Sources AI trusts", "The websites the engines cited in this scan. Being present on these sites is one of the strongest levers for being recommended.")
     if not sources:
         pdf.font(9.5, color=MUTED)
         pdf.multi_cell(0, 5, "The engines in this scan answered from their own knowledge and cited no websites. Web-search engines such as ChatGPT Search, Perplexity and Gemini add cited sources.", new_x="LMARGIN", new_y="NEXT")
@@ -416,7 +441,7 @@ def _sources(pdf: ReportPDF, content: dict):
 
 def _actions(pdf: ReportPDF, content: dict):
     actions = content.get("top_opportunities") or []
-    pdf.section(5, "Recommended actions", "Ranked by expected impact on how often AI recommends you. Each comes from the answers and sources in this scan.")
+    pdf.section(6, "What to do first", "Ranked by expected impact on how often AI recommends you. Each comes from the answers and sources in this scan.")
     if not actions:
         pdf.font(9.5, color=MUTED)
         pdf.multi_cell(0, 5, "No open gaps were found in this scan: you are recommended wherever a competitor is. Keep tracking weekly to catch changes early.", new_x="LMARGIN", new_y="NEXT")
@@ -457,7 +482,7 @@ def _actions(pdf: ReportPDF, content: dict):
 def _methodology(pdf: ReportPDF, content: dict):
     meta = content.get("meta") or {}
     pdf.add_page()
-    pdf.section(6, "Methodology and data", "How these numbers were produced, so they can be checked and compared over time.")
+    pdf.section(7, "Methodology and data", "How these numbers were produced, so they can be checked and compared over time.")
     facts = [
         ("Scan ID", str(meta.get("scan_id", "n/a"))),
         ("Scan run", f"{_date(meta.get('scan_started_at'), True)}  to  {_date(meta.get('scan_completed_at'), True)}"),
@@ -508,6 +533,7 @@ def render_pdf(content: dict, title: str, period: str = "") -> bytes:
     _competitors(pdf, content)
     pdf.add_page()
     _questions(pdf, content)
+    _why(pdf, content)
     _sources(pdf, content)
     _actions(pdf, content)
     _methodology(pdf, content)

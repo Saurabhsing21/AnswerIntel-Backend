@@ -120,3 +120,39 @@ def test_email_report(client, monkeypatch):
     assert "Halden" in sent["payload"]["subject"]
     refreshed = client.get(f"{API}/projects/{project_id}/reports/{report['id']}", headers=headers).json()
     assert refreshed["emailed_at"] is not None
+
+
+def test_report_explains_why_ai_picked_someone_else(client):
+    from app.analysis.models import CompetitorObservation, Mention
+    from app.common.database import SessionLocal
+    from app.providers.response_model import AIResponseRecord
+
+    headers, project_id = ready_project(client, "repwhy")
+    scan = run_scan(client, headers, project_id)
+    with SessionLocal() as session:  # make the first answer a clear loss with a stated reason
+        response_id = session.query(AIResponseRecord.id).filter(AIResponseRecord.scan_id == scan["id"]).order_by(AIResponseRecord.id).first()[0]
+        session.query(Mention).filter(Mention.ai_response_id == response_id).update({"mentioned": False, "recommended": False})
+        rivals = session.query(CompetitorObservation).filter(CompetitorObservation.ai_response_id == response_id).all()
+        for other in rivals:
+            other.recommended = False
+        rival = rivals[0]
+        rival.mentioned, rival.recommended = True, True
+        rival.reason, rival.evidence = "Best rated for small teams", "Kiteline is the top pick for small teams."
+        session.commit()
+
+    content = client.post(f"{API}/projects/{project_id}/reports", json={"type": "manual"}, headers=headers).json()["content"]
+    why = content["why_not_you"]
+    assert 0 < len(why) <= 5 and all(w["winner"] and w["question"] and w["engine"] for w in why)
+    report_id = client.get(f"{API}/projects/{project_id}/reports", headers=headers).json()[0]["id"]
+    html = client.get(f"{API}/projects/{project_id}/reports/{report_id}/export?format=html", headers=headers).text
+    assert "Why AI skips you" in html and why[0]["question"].split()[0] in html
+
+    from app.competitors.models import Competitor
+    from app.metrics.service import load_observations
+    from app.reports.service import why_not_you
+
+    with SessionLocal() as session:
+        names = {c.id: c.name for c in session.query(Competitor).filter(Competitor.project_id == project_id)}
+        every = why_not_you(session, load_observations(session, scan["id"]), names, limit=1000)
+    hit = next(w for w in every if w["quote"] == "Kiteline is the top pick for small teams.")
+    assert hit["reason"] == "Best rated for small teams" and not hit["mentioned"]

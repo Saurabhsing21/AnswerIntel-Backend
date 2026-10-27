@@ -88,6 +88,37 @@ def top_sources(observations: list, brand: str, names: dict[int, str], limit: in
     return sorted(agg.values(), key=lambda r: r["citations"], reverse=True)[:limit]
 
 
+def why_not_you(session: Session, observations: list, names: dict[int, str], limit: int = 5) -> list[dict]:
+    """Questions AI answered by recommending a competitor and not you, with the reason and the sentence it gave."""
+    from app.analysis.models import CompetitorObservation
+
+    losses, seen = [], set()
+    for o in observations:
+        winners = [cid for cid, v in o.competitors.items() if v.get("recommended") and cid in names]
+        if o.brand["recommended"] or not winners or o.scan_prompt_id in seen:
+            continue
+        seen.add(o.scan_prompt_id)
+        losses.append((o, winners[0]))
+    if not losses:
+        return []
+    found = {
+        (c.ai_response_id, c.competitor_id): c
+        for c in session.scalars(select(CompetitorObservation).where(
+            CompetitorObservation.ai_response_id.in_([o.response_id for o, _ in losses])
+        ))
+    }
+    # Losses with a stated reason first: they are the ones a founder can act on.
+    rows = []
+    for o, cid in losses:
+        c = found.get((o.response_id, cid))
+        rows.append({
+            "question": o.prompt_text, "engine": _engine_name(o.engine), "winner": names[cid],
+            "mentioned": bool(o.brand["mentioned"]), "reason": c.reason if c else None, "quote": c.evidence if c else None,
+        })
+    rows.sort(key=lambda r: not (r["reason"] or r["quote"]))
+    return rows[:limit]
+
+
 def build_content(session: Session, project: Project) -> tuple[dict, int]:
     data = build_dashboard(session, project)
     if not data["has_data"]:
@@ -116,6 +147,7 @@ def build_content(session: Session, project: Project) -> tuple[dict, int]:
         "summary": summarize(project.brand_name, data["visibility"], data["competitors"], opportunities),
         "questions": question_results(observations, names),
         "sources": top_sources(observations, project.brand_name, names),
+        "why_not_you": why_not_you(session, observations, names),
         "meta": {
             "generated_at": datetime.now(timezone.utc),
             "country": project.country,

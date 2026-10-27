@@ -62,6 +62,15 @@ def render_html(content: dict, title: str) -> str:
         f"<td class=r style=\"color:{'#16803d' if s['with_you'] else '#c82828'}\"><b>{'Yes' if s['with_you'] else 'No'}</b></td></tr>"
         for s in content.get("sources") or []
     )
+    def lost(w: dict) -> str:
+        said = " and only mentioned you" if w.get("mentioned") else " and did not name you"
+        reason = f". Why: {escape(w['reason'].rstrip('.'))}" if w.get("reason") else ""
+        quote = f"<blockquote>{escape(w['quote'])}</blockquote>" if w.get("quote") else ""
+        return (f"<li><b>{escape(w['question'])}</b><p class=muted>{escape(w['engine'])} recommended "
+                f"<b>{escape(w['winner'])}</b>{said}{reason}.</p>{quote}</li>")
+
+    why = "".join(lost(w) for w in content.get("why_not_you") or [])
+
     def action(a: dict) -> str:
         effort = f"<span class=tag>{EFFORT[a['effort']]}</span>" if a.get("effort") in EFFORT else ""
         steps = "".join(f"<li>{escape(step)}</li>" for step in (a.get("steps") or [a.get("recommended_action")]) if step)
@@ -92,7 +101,7 @@ h3{{font-size:17px;margin:28px 0 8px}} ul{{padding-left:20px}} li{{margin:4px 0}
 dl{{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;background:#fafaf9;border:1px solid #e5e5e5;border-radius:14px;padding:16px 20px;margin:20px 0 0}}
 dt{{font-size:11px;font-weight:600;color:#646464;text-transform:uppercase;letter-spacing:.04em}} dd{{margin:0}}
 section{{margin-top:40px}} .num{{color:#a8c93a;font-weight:600;font-size:12px;margin:0}} h2{{font-size:22px;margin:0;letter-spacing:-.01em}}
-.lead,.muted{{color:#646464}} .lead{{margin:4px 0 14px}}
+.lead,.muted{{color:#646464}} blockquote{{margin:6px 0 0;padding:8px 12px;border-left:3px solid #a8c93a;background:#fafaf9;color:#3f3f3f;font-style:italic}} .lead{{margin:4px 0 14px}}
 table{{width:100%;border-collapse:collapse;font-size:14px}} th{{background:#fafaf9;color:#646464;font-size:11px;text-transform:uppercase;letter-spacing:.04em;text-align:left;padding:9px 10px}}
 td{{padding:10px;border-bottom:1px solid #e5e5e5;vertical-align:top}} .r{{text-align:right}} tr.you td{{background:#f7fce7}}
 .bar{{display:inline-block;width:120px;height:7px;border-radius:9px;background:#e5e5e5;overflow:hidden;vertical-align:middle;margin-right:6px}} .bar span{{display:block;height:100%}}
@@ -104,11 +113,12 @@ ol>li{{margin:0 0 18px}} footer{{color:#a3a3a3;font-size:12px;border-top:1px sol
 <p>{escape(content['website'].split("://")[-1].rstrip("/"))} &middot; {escape(content['category'])}{f" &middot; {escape(meta['country'])}" if meta.get('country') else ''}</p></header>
 <div class=wrap><div class=tiles>{tiles}</div>
 <h3>Executive summary</h3><ul>{summary}</ul>{f"<dl>{scope}</dl>" if scope else ""}
-{section(1, "Visibility by AI engine", "How often each engine names and recommends you.", f"<table><tr><th>Engine</th><th class=r>Answers</th><th>Mentioned</th><th>Recommended</th></tr>{engines}</table>" if engines else "")}
-{section(2, "Competitive landscape", "Every tracked brand in the same answers.", f"<table><tr><th>Brand</th><th class=r>Mentioned</th><th class=r>Recommended</th><th class=r>Avg. rank</th><th>Share of voice</th></tr>{competitors}</table>" if competitors else "")}
-{section(3, "Results by buyer question", "Whether the engines recommended you, and who they recommended alongside or instead.", f"<table><tr><th>Question</th><th>Result</th><th class=r>Picked</th><th>Also recommended</th></tr>{questions}</table>" if questions else "")}
-{section(4, "Sources AI relies on", "The websites the engines cited in this scan.", f"<table><tr><th>Website</th><th>Type</th><th class=r>Citations</th><th>Owner</th><th class=r>Names you</th></tr>{sources}</table>" if sources else "")}
-{section(5, "Recommended actions", "Ranked by expected impact on how often AI recommends you.", f"<ol>{actions}</ol>" if actions else "<p class=muted>No open gaps were found in this scan.</p>")}
+{section(1, "Where you stand", "How often each engine names and recommends you.", f"<table><tr><th>Engine</th><th class=r>Answers</th><th>Mentioned</th><th>Recommended</th></tr>{engines}</table>" if engines else "")}
+{section(2, "Who AI recommends instead", "Every tracked brand in the same answers, then each buyer question and who won it.", (f"<table><tr><th>Brand</th><th class=r>Mentioned</th><th class=r>Recommended</th><th class=r>Avg. rank</th><th>Share of voice</th></tr>{competitors}</table>" if competitors else "") + (f"<table style=\"margin-top:20px\"><tr><th>Question</th><th>Result</th><th class=r>Picked</th><th>Also recommended</th></tr>{questions}</table>" if questions else ""))}
+{section(3, "Why AI skips you", "The questions you lost, with the reason the engine gave and the sentence behind it.", f"<ol>{why}</ol>" if why else "")}
+{section(4, "Sources AI trusts", "The websites the engines cited. A No in the last column is a site that backs answers without naming you.", f"<table><tr><th>Website</th><th>Type</th><th class=r>Citations</th><th>Owner</th><th class=r>Names you</th></tr>{sources}</table>" if sources else "")}
+{section(5, "What to do first", "Ranked by expected impact on how often AI recommends you.", f"<ol>{actions}</ol>" if actions else "<p class=muted>No open gaps were found in this scan.</p>")}
+{"" if (meta.get("scans_in_trend") or 0) > 1 else "<p class=muted style=\"margin-top:32px\">This is your first scan. Tracking starts with the next one, and later reports show what changed.</p>"}
 <footer>Scan {escape(str(meta.get("scan_id", "")))} &middot; generated {escape(_date(meta.get("generated_at"), True))}. AI answers vary between runs, users and over time; rates carry the margin of error shown.
 Confidential. Prepared by SeenLens for {escape(content['brand'])}.</footer>
 </div></main></body></html>"""
