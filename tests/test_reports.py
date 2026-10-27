@@ -47,7 +47,8 @@ def test_weekly_report_content_and_immutability(client):
     second = client.post(f"{API}/projects/{project_id}/reports", json={"type": "monthly"}, headers=headers).json()
     assert second["scan_id"] != report["scan_id"]
     listed = client.get(f"{API}/projects/{project_id}/reports", headers=headers).json()
-    assert [r["id"] for r in listed] == [second["id"], report["id"]]
+    ids = [r["id"] for r in listed]  # newest first; each scan also made its own report
+    assert ids == sorted(ids, reverse=True) and ids[0] == second["id"] and report["id"] in ids
     assert "content" not in listed[0]
 
 

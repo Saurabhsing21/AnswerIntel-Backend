@@ -189,9 +189,10 @@ class ScanExecutionService:
                     log.exception("Site audit failed for scan %s", scan.id)
                     audit = None
                 generate_and_store(session, scan, project.brand_name.strip(), data["observations"], audit)
-                # Drop and overtake alerts are a paid feature; "your scan is ready" goes to everyone.
+                # Drop and overtake alerts are a paid feature. Paid plans hear "your scan is ready" from the
+                # report email sent once the scan is done; the free trial gets the short ready email instead.
                 paid = entitlements(session, project.workspace_id).pro
-                for alert in ((alert_on_drop, alert_on_overtake, notify_first_scan) if paid else (notify_first_scan,)):
+                for alert in ((alert_on_drop, alert_on_overtake) if paid else (notify_first_scan,)):
                     try:
                         alert(session, scan)
                     except Exception:  # an alert email must never fail a scan
@@ -220,8 +221,14 @@ class ScanExecutionService:
             )
 
 
-def run_scan(scan_id: int) -> None:
+def run_scan(scan_id: int, report_type: str = "manual") -> None:
+    from app.reports.delivery import deliver_scan_report  # reports build on metrics, which import scans
+
     ScanExecutionService().run(scan_id)
+    try:
+        deliver_scan_report(scan_id, report_type)
+    except Exception:  # the scan is done and saved; a report failure must not mark the job failed
+        log.exception("Report for scan %s failed", scan_id)
 
 
 def recover_interrupted_scans() -> int:

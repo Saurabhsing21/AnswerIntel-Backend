@@ -107,11 +107,15 @@ def test_competitor_steps_name_the_page_and_the_domains_behind_the_answer():
 
 
 def test_first_scan_sends_a_ready_email_once(client, outbox):
+    from app.metrics.alerts import notify_first_scan
+
     headers = signup(client, "ready")
     project_id = make_project(client, headers)
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
-    scan_and_wait(client, headers, project_id)
-    scan_and_wait(client, headers, project_id)
+    first = scan_and_wait(client, headers, project_id)
+    second = scan_and_wait(client, headers, project_id)
+    with SessionLocal() as s:  # paid plans get the report email instead, so call the free trial's alert directly
+        assert notify_first_scan(s, s.get(Scan, first["id"])) and not notify_first_scan(s, s.get(Scan, second["id"]))
     assert [m["subject"] for m in outbox if "is ready" in m["subject"]] == ["Your first scan of Halden is ready"]
 
 
