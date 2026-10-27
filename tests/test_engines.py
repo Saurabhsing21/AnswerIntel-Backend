@@ -43,8 +43,8 @@ def test_google_ai_mode_is_available_when_dataforseo_is_configured(monkeypatch):
 
 
 def test_engine_models_can_be_swapped_from_the_environment(monkeypatch):
-    monkeypatch.setattr(settings, "engine_models", "claude=anthropic/claude-sonnet-4.5")
-    assert [e.model for e in engines_for_project(["claude"])] == ["anthropic/claude-sonnet-4.5"]
+    monkeypatch.setattr(settings, "engine_models", "llama=meta-llama/llama-4-scout")
+    assert [e.model for e in engines_for_project(["llama"])] == ["meta-llama/llama-4-scout"]
 
 
 def test_projects_choose_their_engines_and_scans_use_only_those(client):
@@ -52,17 +52,18 @@ def test_projects_choose_their_engines_and_scans_use_only_those(client):
     catalog = client.get(f"{API}/engines", headers=headers).json()
     assert {"chatgpt", "claude", "grok", "llama", "mistral", "deepseek", "qwen", "copilot"} <= {e["key"] for e in catalog}
     assert next(e for e in catalog if e["key"] == "copilot")["available"] is False
+    assert next(e for e in catalog if e["key"] == "claude")["available"] is False  # paused for now
 
     project_id = make_project(client, headers)
     assert client.put(f"{API}/projects/{project_id}", json={"engines": ["copilot"]}, headers=headers).status_code == 422
     assert client.put(f"{API}/projects/{project_id}", json={"engines": []}, headers=headers).status_code == 422
-    updated = client.put(f"{API}/projects/{project_id}", json={"engines": ["claude", "chatgpt", "claude"]}, headers=headers).json()
-    assert updated["engines"] == ["chatgpt", "claude"]
+    updated = client.put(f"{API}/projects/{project_id}", json={"engines": ["llama", "chatgpt", "llama"]}, headers=headers).json()
+    assert updated["engines"] == ["chatgpt", "llama"]
 
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
     answers = client.get(f"{API}/projects/{project_id}/scans/{scan['id']}/responses", headers=headers).json()
-    assert {a["engine"] for a in answers} == {"chatgpt", "claude"}
+    assert {a["engine"] for a in answers} == {"chatgpt", "llama"}
 
 
 def test_web_search_and_country_reach_the_request(openrouter):
@@ -107,20 +108,20 @@ def test_google_ai_mode_without_an_ai_answer_is_an_empty_answer(monkeypatch):
 def test_a_prompt_can_run_on_fewer_engines_than_the_project(client):
     headers = signup(client, "prompt-engines")
     project_id = make_project(client, headers)
-    client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt", "claude", "grok"]}, headers=headers)
+    client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt", "llama", "grok"]}, headers=headers)
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
     prompts = [p for p in client.get(f"{API}/projects/{project_id}/prompts", headers=headers).json() if p["is_active"]]
     assert all(p["engines"] is None for p in prompts)
 
-    narrowed = client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": ["grok", "claude"]}, headers=headers).json()
-    assert narrowed["engines"] == ["claude", "grok"]
+    narrowed = client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": ["grok", "llama"]}, headers=headers).json()
+    assert narrowed["engines"] == ["grok", "llama"]
     assert client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": ["copilot"]}, headers=headers).status_code == 422
 
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
     assert scan["total_runs"] == (len(prompts) - 1) * 3 + 2
     answers = client.get(f"{API}/projects/{project_id}/scans/{scan['id']}/responses", headers=headers).json()
     first = [a for a in answers if a["prompt"] == prompts[0]["text"]]
-    assert {a["engine"] for a in first} == {"claude", "grok"}
+    assert {a["engine"] for a in first} == {"grok", "llama"}
 
     reset = client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": []}, headers=headers).json()
     assert reset["engines"] is None  # back to every project engine
@@ -160,3 +161,30 @@ def test_instructions_reach_the_model_as_marked_user_input(monkeypatch):
     out = generator.LLMPromptGenerator(count=5).generate(data)
     assert "<user_request>\nsmall agencies\n</user_request>" in seen["user"] and "Generate 5 new prompts" in seen["user"]
     assert out[0]["text"] == "Which CRM suits a 5-person agency?"
+
+
+def test_a_refused_request_fails_at_once_instead_of_retrying(monkeypatch):
+    """An unverified DataForSEO account or a bad key answers 4xx forever; the scan must not wait out the backoff."""
+    import httpx
+    from app.common.llm import PermanentLLMError
+    from app.providers import google_ai
+
+    monkeypatch.setattr(settings, "dataforseo_login", "x")
+    monkeypatch.setattr(settings, "dataforseo_password", "y")
+    calls = []
+    monkeypatch.setattr(google_ai.httpx, "post", lambda *a, **k: calls.append(1) or httpx.Response(403, json={}))
+    with pytest.raises(PermanentLLMError):
+        google_ai.ask_google_ai("best SIP app")
+    assert len(calls) == 1
+
+
+def test_gemini_redirect_citations_name_the_real_site():
+    from app.providers.openrouter import extract_citations
+
+    redirect = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ"
+    data = {"choices": [{"message": {"annotations": [
+        {"type": "url_citation", "url_citation": {"url": redirect + "a", "title": "kuvera.in"}},
+        {"type": "url_citation", "url_citation": {"url": redirect + "b", "title": "icici.bank.in"}},
+        {"type": "url_citation", "url_citation": {"url": "https://groww.in/mf", "title": "Groww MF"}},
+    ]}}]}
+    assert extract_citations(data) == ["https://kuvera.in", "https://icici.bank.in", "https://groww.in/mf"]

@@ -16,6 +16,13 @@ def rate_limits_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_ai_keys(monkeypatch):
+    """Keys in a developer's .env must never be used by tests: real AI calls cost money."""
+    for key in ("openrouter_api_key", "dataforseo_login", "dataforseo_password", "resend_api_key", "stripe_secret_key"):
+        monkeypatch.setattr(settings, key, "")
+
+
+@pytest.fixture(autouse=True)
 def no_network_site_audit(monkeypatch):
     """Scans audit the brand's website; tests must never reach the real internet."""
     monkeypatch.setattr("app.opportunities.site_audit.safe_get", lambda url, **kwargs: None)

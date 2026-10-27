@@ -26,6 +26,8 @@ SYSTEM = """You analyze an AI assistant's answer to a buyer's question for a bra
 For EACH brand listed, decide:
 - mentioned: the answer names the brand.
 - recommended: the answer tells the reader to choose it, or presents it as one of its suggested picks.
+  Every entry in a list of options, top picks or "other good options" counts as recommended, wherever it sits in the list,
+  unless the answer advises against it there (e.g. "skip this", "not a fit").
   A passing or neutral mention is NOT a recommendation. If the answer says "X exists, but Y is recommended", only Y is recommended.
 - position: its rank in an explicit numbered/ranked list, otherwise null. Never invent a ranking.
 - sentiment: how the answer talks about that brand specifically (positive, neutral, negative), null if not mentioned.

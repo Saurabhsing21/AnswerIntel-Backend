@@ -17,7 +17,7 @@ from app.common.config import settings
 from app.common.database import SessionLocal
 from app.competitors.models import Competitor
 from app.prompts.models import Prompt
-from app.providers.models import V1_MODELS
+from app.providers.models import engines_for_project
 from app.providers.response_model import AIResponseRecord
 from app.scans.models import Scan
 from app.scans.retention import purge_expired
@@ -342,7 +342,7 @@ def test_starter_limits_are_enforced(client, fake_stripe):
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     assert client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers).status_code == 200
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
-    assert scan["total_runs"] == len(V1_MODELS)  # every engine on every plan
+    assert scan["total_runs"] == len(engines_for_project(None))  # every engine on every plan
 
     with SessionLocal() as session:  # one more scan today fills Starter's two; 29 more prompts fill 30
         session.add(Scan(project_id=pid, status="completed"))
@@ -365,7 +365,7 @@ def test_monthly_answer_cap_refuses_a_scan_that_would_go_over(client, fake_strip
     subscribe(client, fake_stripe, workspace_id)  # Starter: 520 answers in any 30 days
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
-    needed = len(V1_MODELS)  # one prompt on every engine
+    needed = len(engines_for_project(None))  # one prompt on every engine
     with SessionLocal() as session:  # older scans (not today, so the daily guard stays out of it)
         old = Scan(project_id=uuid.UUID(project_id), status="completed", total_runs=520 - needed + 1,
                    created_at=datetime.now(timezone.utc) - timedelta(days=3))

@@ -125,13 +125,13 @@ def no_answer_page(website: str, prompt: str, citations: list[dict], fetch: Fetc
     }
 
 
-def winning_criteria(winners: list[dict]) -> dict | None:
+def winning_criteria(winners: list[dict], picked: bool = True) -> dict | None:
     quoted = [w for w in winners if w.get("evidence") or w.get("reason")]
     if not quoted:
         return None
     return {
         "code": "WINNING_CRITERIA",
-        "title": f"Why the engine picked {', '.join(w['name'] for w in quoted[:3])}",
+        "title": f"{'Why the engine picked' if picked else 'What the answer says about'} {', '.join(w['name'] for w in quoted[:3])}",
         "detail": "These reasons come from the answer itself. If they are true for you too, your site and profiles should say so plainly.",
         "action": "State these points on your homepage, pricing and comparison pages, in words AI can quote.",
         "evidence": {"winners": [{"name": w["name"], "reason": w.get("reason"), "quote": w.get("evidence")} for w in quoted[:5]]},
@@ -146,11 +146,12 @@ def diagnose(
     fetch = fetch or cached_fetch
     if mention.get("recommended"):
         return {"status": "recommended", "causes": []}
-    winners = [c for c in competitors if c.get("recommended")] or [c for c in competitors if c.get("mentioned")]
+    picked = [c for c in competitors if c.get("recommended")]
+    winners = picked or [c for c in competitors if c.get("mentioned")]  # nobody picked: what it said about the ones it named
     causes = [
         technical(website, engine, fetch),
         source_gap(brand, [c["name"] for c in competitors], citations, fetch),
-        winning_criteria(winners),
+        winning_criteria(winners, picked=bool(picked)),
     ]
     if mention.get("mentioned"):
         causes.append({

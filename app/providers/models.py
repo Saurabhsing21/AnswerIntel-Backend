@@ -30,6 +30,8 @@ CATALOG = (
 )
 # Shown in the app but not selectable: no public API to ask them through.
 COMING_SOON = {"copilot": "Microsoft Copilot"}
+# In the catalog but switched off for now (OpenRouter budget); shown as coming soon and skipped by scans.
+PAUSED = {"claude"}
 # What a new project scans unless the user picks otherwise: the engines buyers use most, as they answer in their apps.
 DEFAULT_ENGINES = ("chatgpt_search", "perplexity", "gemini", "google")
 
@@ -46,7 +48,7 @@ def available_engines() -> list[ModelConfig]:
     models = _overrides()
     return [
         ModelConfig(e.key, models.get(e.key, e.model), e.display_name, e.web_search)
-        for e in CATALOG if e.key != "google" or settings.google_ai_enabled
+        for e in CATALOG if e.key not in PAUSED and (e.key != "google" or settings.google_ai_enabled)
     ]
 
 

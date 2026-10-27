@@ -15,6 +15,7 @@ from app.billing.plans import engines_for, entitlements
 from app.providers.models import engines_for_prompt
 from app.common.config import settings
 from app.common.database import SessionLocal
+from app.common.llm import PermanentLLMError
 from app.common.database import engine as db_engine
 from app.competitors.models import Competitor
 from app.metrics.alerts import alert_on_drop, alert_on_overtake, notify_first_scan
@@ -129,6 +130,8 @@ class ScanExecutionService:
                     try:
                         with slots[engine.key]:
                             return self.provider.ask(prompt_text, engine.model, replace(provider_context, web_search=engine.web_search))
+                    except PermanentLLMError:
+                        raise  # a refused request fails the same way on every retry
                     except Exception:
                         if attempt == len(delays):
                             raise

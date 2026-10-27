@@ -6,6 +6,8 @@ from app.providers.base import AIProvider, AIResponse, ProviderContext
 from app.providers.google_ai import ask_google_ai
 from app.providers.models import GOOGLE_AI_MODEL
 
+GROUNDING_REDIRECT = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/"
+
 
 def extract_citations(data: dict) -> list[str]:
     """Collect source URLs from the response (Perplexity-style and annotation-style)."""
@@ -16,7 +18,11 @@ def extract_citations(data: dict) -> list[str]:
     message = (data.get("choices") or [{}])[0].get("message") or {}
     for annotation in message.get("annotations") or []:
         if annotation.get("type") == "url_citation":
-            url = (annotation.get("url_citation") or {}).get("url")
+            cite = annotation.get("url_citation") or {}
+            url, title = cite.get("url") or "", (cite.get("title") or "").strip()
+            # Gemini links through a Google redirect; the real site is in the title (e.g. "kuvera.in").
+            if url.startswith(GROUNDING_REDIRECT) and "." in title and " " not in title:
+                url = f"https://{title}"
             if url:
                 urls.append(url)
     for result in data.get("search_results") or []:

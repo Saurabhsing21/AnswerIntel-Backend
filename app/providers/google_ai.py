@@ -9,7 +9,7 @@ import time
 import httpx
 
 from app.common.config import settings
-from app.common.llm import LLMError
+from app.common.llm import LLMError, PermanentLLMError
 from app.providers.base import AIResponse, ProviderContext
 
 URL = "https://api.dataforseo.com/v3/serp/google/ai_mode/live/advanced"
@@ -41,7 +41,8 @@ def ask_google_ai(prompt: str, context: ProviderContext | None = None) -> AIResp
     except httpx.HTTPError as exc:
         raise LLMError(f"DataForSEO unreachable: {exc.__class__.__name__}") from exc
     if response.status_code >= 400:
-        raise LLMError(f"DataForSEO returned {response.status_code}")
+        error = LLMError if response.status_code == 429 or response.status_code >= 500 else PermanentLLMError
+        raise error(f"DataForSEO returned {response.status_code}")
     data = response.json()
     task_result = (data.get("tasks") or [{}])[0]
     if task_result.get("status_code", 20000) >= 40000:

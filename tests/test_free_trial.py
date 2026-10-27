@@ -71,7 +71,7 @@ def test_trial_engines_are_capped_at_three_and_premium_ones_are_locked(client, o
     project = client.get(f"{API}/projects/{project_id}", headers=headers).json()
     assert len(project["engines"]) <= 3 and not {"claude", "grok", "google"} & set(project["engines"])
 
-    claude = client.put(f"{API}/projects/{project_id}", json={"engines": ["claude"]}, headers=headers)
+    claude = client.put(f"{API}/projects/{project_id}", json={"engines": ["grok"]}, headers=headers)
     assert claude.status_code == 402 and claude.json()["error"]["limit"] == "engines"
     four = client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt", "gemini", "perplexity", "llama"]}, headers=headers)
     assert four.status_code == 402

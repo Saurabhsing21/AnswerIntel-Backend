@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.prompts.generator import VALID_CATEGORIES
-from app.providers.models import V1_MODELS
+from app.providers.models import engines_for_project
 
 
 client = TestClient(app)
@@ -118,8 +118,8 @@ def test_phase4_scan_flow_with_simulated_provider():
     assert responses.status_code == 200, responses.text
     response_rows = responses.json()
 
-    assert len(response_rows) == len(prompt_rows) * len(V1_MODELS)
-    assert {row["model"] for row in response_rows} == {model.model for model in V1_MODELS}
+    assert len(response_rows) == len(prompt_rows) * len(engines_for_project(None))
+    assert {row["model"] for row in response_rows} == {model.model for model in engines_for_project(None)}
 
     required_fields = {
         "scan_id",

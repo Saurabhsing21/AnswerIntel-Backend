@@ -11,6 +11,10 @@ class LLMError(Exception):
     pass
 
 
+class PermanentLLMError(LLMError):
+    """The provider refused the request itself (bad key, unverified account, invalid input): retrying cannot help."""
+
+
 def chat(
     model: str,
     messages: list[dict],
@@ -47,18 +51,20 @@ def chat(
                 raise LLMError(f"Provider returned {response.status_code}")
             if response.status_code >= 400:
                 # Client errors (bad model, bad key) will not succeed on retry.
-                raise LLMError(f"Provider rejected the request ({response.status_code})")
+                raise PermanentLLMError(f"Provider rejected the request ({response.status_code})")
             data = response.json()
             if "choices" not in data or not data["choices"]:
                 raise LLMError("Provider returned no choices")
             return data
         except (httpx.HTTPError, LLMError, ValueError) as exc:
             last_error = exc
-            retryable = not (isinstance(exc, LLMError) and "rejected" in str(exc))
+            retryable = not isinstance(exc, PermanentLLMError)
             if attempt < settings.provider_max_retries and retryable:
                 time.sleep(2 * (attempt + 1))
                 continue
             break
+    if isinstance(last_error, PermanentLLMError):
+        raise last_error
     raise LLMError(str(last_error) if last_error else "Provider call failed")
 
 

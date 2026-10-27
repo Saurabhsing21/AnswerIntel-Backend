@@ -5,7 +5,6 @@ Asks a model with live web search; without an AI key it returns clearly-marked s
 
 import json
 import logging
-import re
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, ValidationError
@@ -58,9 +57,9 @@ def suggest_competitors(brand: str, website: str, category: str, country: str, d
     )
     try:
         data = chat(settings.analysis_model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
-                    json_mode=True, web_search=True)
+                    web_search=True)  # no JSON mode: OpenAI rejects it alongside web search
         content = (data["choices"][0]["message"].get("content") or "").strip()
-        content = re.sub(r"^```(?:json)?|```$", "", content).strip()
+        content = content[content.find("{"):content.rfind("}") + 1]  # searched answers can wrap the JSON in prose
         parsed = Suggestions.model_validate(json.loads(content))
     except (LLMError, json.JSONDecodeError, ValidationError, KeyError, IndexError):
         log.warning("Competitor suggestion failed for %s", brand, exc_info=True)
