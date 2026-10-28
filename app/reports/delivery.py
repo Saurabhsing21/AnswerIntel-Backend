@@ -9,6 +9,7 @@ from app.common.errors import AppError
 from app.projects.models import Project
 from app.reports.email import send_report_email
 from app.reports.models import Report
+from app.reports.pdf_jobs import queue_report_pdf
 from app.reports.render import render_html
 from app.reports.service import create_report, report_title
 from app.scans.models import Scan
@@ -31,6 +32,7 @@ def deliver_scan_report(scan_id: int, report_type: str) -> None:
             return
         report = create_report(session, project, report_type)
         session.commit()
+        queue_report_pdf(report.id)
         owner = session.get(User, project.user_id)
         try:
             send_report_email(owner.email, report_title(report), render_html(report.content, report_title(report)))

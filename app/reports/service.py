@@ -54,15 +54,18 @@ def question_results(observations: list, names: dict[int, str]) -> list[dict]:
     rows: dict[int, dict] = {}
     for o in observations:
         row = rows.setdefault(o.scan_prompt_id, {
-            "text": o.prompt_text, "category": o.category, "engines": 0, "seen_on": 0, "recommended_on": 0, "winners": Counter(),
+            "text": o.prompt_text, "category": o.category, "engines": 0, "seen_on": 0, "recommended_on": 0,
+            "cited_on": 0, "winners": Counter(),
         })
         row["engines"] += 1
         row["seen_on"] += bool(o.brand["mentioned"])
         row["recommended_on"] += bool(o.brand["recommended"])
+        row["cited_on"] += any(c.get("is_brand_owned") for c in o.citations)
         row["winners"].update(names[cid] for cid, v in o.competitors.items() if v.get("recommended") and cid in names)
     out = []
     for row in rows.values():
-        row["winners"] = [n for n, _ in row["winners"].most_common(3)]
+        row["picked"] = [n for n, _ in row["winners"].most_common()]  # every brand AI picked, for the PDF's grid
+        row["winners"] = row["picked"][:3]
         row["status"] = (
             "won" if row["recommended_on"] == row["engines"] else "shared" if row["recommended_on"]
             else "mentioned" if row["seen_on"] else "absent"
@@ -119,6 +122,32 @@ def why_not_you(session: Session, observations: list, names: dict[int, str], lim
     return rows[:limit]
 
 
+def competitor_reasons(session: Session, observations: list, names: dict[int, str]) -> dict[str, dict]:
+    """Per competitor: the reasons AI gave most often when it picked them, and one sentence quoted from an answer."""
+    from app.analysis.models import CompetitorObservation
+
+    rows = session.scalars(select(CompetitorObservation).where(
+        CompetitorObservation.ai_response_id.in_([o.response_id for o in observations]),
+        CompetitorObservation.recommended.is_(True),
+    )).all()
+    out: dict[str, dict] = {}
+    for cid, name in names.items():
+        mine = [r for r in rows if r.competitor_id == cid]
+        reasons = Counter(r.reason.strip().rstrip(".") for r in mine if r.reason and r.reason.strip())
+        quote = next((r.evidence.strip() for r in mine if r.evidence and r.evidence.strip()), None)
+        if reasons or quote:
+            out[name] = {"reasons": [{"text": t, "count": n} for t, n in reasons.most_common(4)], "quote": quote}
+    return out
+
+
+def engine_citations(observations: list) -> dict[str, float]:
+    """Share of each engine's answers that link to the brand's own site."""
+    by_engine: dict[str, list[bool]] = {}
+    for o in observations:
+        by_engine.setdefault(_engine_name(o.engine), []).append(any(c.get("is_brand_owned") for c in o.citations))
+    return {e: round(sum(v) / len(v), 4) for e, v in by_engine.items()}
+
+
 def build_content(session: Session, project: Project) -> tuple[dict, int]:
     data = build_dashboard(session, project)
     if not data["has_data"]:
@@ -148,6 +177,8 @@ def build_content(session: Session, project: Project) -> tuple[dict, int]:
         "questions": question_results(observations, names),
         "sources": top_sources(observations, project.brand_name, names),
         "why_not_you": why_not_you(session, observations, names),
+        "competitor_reasons": competitor_reasons(session, observations, names),
+        "engine_citations": engine_citations(observations),
         "meta": {
             "generated_at": datetime.now(timezone.utc),
             "country": project.country,

@@ -1,0 +1,19 @@
+{
+  "name": "seenlens-pdf-renderer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/render.tsx --bundle --platform=node --format=esm --target=node20 --packages=external --outfile=dist/render.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-pdf/renderer": "4.9.0",
+    "react": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/react": "19.2.2",
+    "esbuild": "0.25.11",
+    "typescript": "5.9.3"
+  }
+}

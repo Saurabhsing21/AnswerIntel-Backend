@@ -10,3 +10,5 @@ __pycache__/
 docs/
 .git/
 .DS_Store
+pdf-renderer/node_modules/
+pdf-renderer/dist/

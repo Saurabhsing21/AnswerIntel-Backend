@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, String, Uuid, func
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, LargeBinary, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -29,3 +29,19 @@ class Report(Base):
     share_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ReportPdf(Base):
+    """A report's PDF, drawn once by the report worker and served from here. Kept apart so listing reports never
+    loads the file."""
+
+    __tablename__ = "report_pdfs"
+
+    report_id: Mapped[int] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # pending, ready or failed
+    pdf: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    render_ms: Mapped[int | None] = mapped_column(nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

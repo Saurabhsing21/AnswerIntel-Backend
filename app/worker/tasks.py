@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from app.billing.emails import send_free_nudges, send_trial_notices
+from app.reports.pdf_jobs import build_report_pdf
 from app.common.config import settings
 from app.scans.execution import run_scan
 from app.scans.retention import purge_expired
@@ -13,6 +14,12 @@ def run_scan_task(scan_id: int, send_report: bool = False) -> None:
     """Idempotent: the scan lock and stored-answer check make a redelivered job safe.
     `send_report` marks a scheduled scan, whose report is the weekly one."""
     run_scan(scan_id, "weekly" if send_report else "manual")
+
+
+@celery_app.task(name="reports.render_pdf")
+def render_report_pdf_task(report_id: int) -> None:
+    """Runs on the `reports` queue, so a burst of PDFs never waits behind long scans (or the reverse)."""
+    build_report_pdf(report_id)
 
 
 @celery_app.task(name="schedules.dispatch")

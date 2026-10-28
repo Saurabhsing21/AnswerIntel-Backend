@@ -1,8 +1,38 @@
 """Report exports. Every value that reaches HTML is escaped: brand and competitor names are user input."""
 
+from datetime import datetime
 from html import escape
 
 LIGHT = "#f7f7f7"
+STATUS = {  # question result -> (label, text colour, fill)
+    "won": ("Recommended", (22, 101, 52), (220, 252, 231)),
+    "shared": ("Sometimes", (133, 77, 14), (254, 243, 199)),
+    "mentioned": ("Mentioned only", (71, 85, 105), (241, 245, 249)),
+    "absent": ("Missing", (153, 27, 27), (254, 226, 226)),
+}
+EFFORT = {"S": "Quick win", "M": "A few hours", "L": "Bigger project"}
+SOURCE_TYPES = {
+    "brand_website": "Your site", "competitor_website": "Competitor site", "review_site": "Review site",
+    "comparison": "Comparison", "news": "News", "blog": "Blog", "reddit": "Reddit", "forum": "Forum",
+    "directory": "Directory", "video": "Video", "other": "Other",
+}
+
+
+def _pts(delta: float | None) -> str:
+    if delta is None:
+        return "first scan"
+    pts = round(delta * 100)
+    return "no change" if pts == 0 else f"{'+' if pts > 0 else '-'}{abs(pts)} pts"
+
+
+def _date(value: str | None, with_time: bool = False) -> str:
+    if not value:
+        return "n/a"
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return str(value)[:10]
+    return moment.strftime("%d %b %Y, %H:%M %Z" if with_time else "%d %b %Y").strip().rstrip(",")
 
 
 def _pct(value: float | None) -> str:
@@ -20,8 +50,6 @@ def _bar(value: float | None, color: str = "#171717") -> str:
 
 def render_html(content: dict, title: str) -> str:
     """The web and email version of the PDF report: same sections, same order. Older reports skip what they lack."""
-    from app.reports.pdf import EFFORT, SOURCE_TYPES, STATUS, _date, _pts
-
     v, meta = content["visibility"], content.get("meta") or {}
     deltas, margins = v.get("deltas") or {}, v.get("margins") or {}
     tiles = "".join(

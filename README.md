@@ -9,6 +9,7 @@ background workers for scans, and a scheduler.
 cp .env.example .env                  # set DATABASE_URL and JWT_SECRET_KEY; OPENROUTER_API_KEY for real engines
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/alembic upgrade head
+(cd pdf-renderer && npm ci && npm run build)   # the PDF report renderer; needs Node 20+
 .venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
@@ -20,8 +21,13 @@ With `REDIS_URL` empty, scans run inside the API process (fine for development).
 ```bash
 # set REDIS_URL in .env, then in separate terminals:
 .venv/bin/celery -A app.worker.celery_app worker -Q scan -P threads --concurrency 4
+.venv/bin/celery -A app.worker.celery_app worker -Q reports -P threads --concurrency 2   # report PDFs
 .venv/bin/celery -A app.worker.celery_app beat      # exactly ONE instance
 ```
+
+Every new report gets its PDF drawn once by the `reports` worker (`app/reports/pdf_jobs.py`): the rules in
+`app/reports/document.py` decide what each page says, and `pdf-renderer/` (React PDF) draws it in about a second.
+Downloads are then served from the database; the export answers 202 while a PDF is still being drawn.
 
 Use `-P threads`: scans are I/O-bound, and Celery's default prefork pool crashes on Python 3.14.
 Beat queues three jobs: weekly scans for projects that enabled a schedule, a sweep that re-queues scans

@@ -1,4 +1,5 @@
-"""Celery app (PRD 56-57). Run a worker with: celery -A app.worker.celery_app worker -l info -Q scan"""
+"""Celery app (PRD 56-57). Run a scan worker with: celery -A app.worker.celery_app worker -l info -Q scan
+and a report worker with: celery -A app.worker.celery_app worker -l info -Q reports"""
 
 from celery import Celery
 from celery.schedules import crontab
@@ -13,6 +14,7 @@ celery_app = Celery(
 )
 celery_app.conf.update(
     task_default_queue="scan",
+    task_routes={"reports.*": {"queue": "reports"}},  # PDF rendering has its own workers
     task_acks_late=True,  # a job is only acknowledged once it finished, so a dead worker's job is redelivered
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,  # scans are long; do not hoard jobs behind a busy worker

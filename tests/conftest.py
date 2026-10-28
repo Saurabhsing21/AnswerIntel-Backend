@@ -42,6 +42,12 @@ def outbox(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def stub_pdf_renderer(monkeypatch):
+    """The Node renderer is exercised in test_report_pdf.py; elsewhere a PDF only needs to exist."""
+    monkeypatch.setattr("app.reports.pdf_jobs.render_pdf_bytes", lambda document: b"%PDF-1.7 stub")
+
+
+@pytest.fixture(autouse=True)
 def no_backoff_waiting(monkeypatch):
     """Provider retries use the real 30s/2m/10m delays in production; tests must not sleep through them."""
     monkeypatch.setattr("app.scans.execution._backoff", lambda seconds: None)
