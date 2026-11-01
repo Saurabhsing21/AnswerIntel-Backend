@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     # Launch mode: only the waitlist endpoint answers; every other API route is 404 (the website is the product).
     waitlist_only: bool = False
     sentry_dsn: str = ""  # empty = error monitoring off
+    # Comma-separated emails that may open the /admin cost pages (verified accounts only). Empty = nobody.
+    admin_emails: str = ""
 
     # Neon writes plain postgresql:// URLs to the repo-root .env.local; the pooled one serves the app, the direct
     # (unpooled) one runs migrations.

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 
+from app.admin.router import router as admin_router
 from app.auth.router import router as auth_router
 from app.billing.router import router as billing_router
 from app.freecheck.router import router as free_check_router
@@ -24,6 +25,7 @@ from app.schedules.router import router as schedules_router
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(limit_api)])
 
 router.include_router(auth_router)
+router.include_router(admin_router)
 router.include_router(projects_router)
 router.include_router(onboarding_router)
 router.include_router(logos_router)

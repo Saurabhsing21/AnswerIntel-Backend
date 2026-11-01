@@ -3,6 +3,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 
 from app.auth.jwt import decode_access_token
+from app.common.config import settings
 from app.common.database import SessionLocal
 from app.users.models import User
 
@@ -47,3 +48,16 @@ def get_current_user(
             )
 
         return user
+
+
+def is_admin(user: User) -> bool:
+    """Listed in ADMIN_EMAILS and verified, so nobody gains access by registering an admin's address."""
+    admins = {e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()}
+    return user.email_verified_at is not None and user.email.lower() in admins
+
+
+def require_admin(user: User = Depends(get_current_user)) -> User:
+    """404, not 403, so the admin routes don't reveal themselves."""
+    if not is_admin(user):
+        raise HTTPException(status_code=404, detail="Not found")
+    return user

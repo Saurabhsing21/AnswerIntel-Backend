@@ -17,7 +17,7 @@ from app.auth.models import RefreshToken
 from app.auth.refresh import issue_tokens, revoke, rotate
 from app.common.errors import AppError
 from fastapi import Depends
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, is_admin
 from app.common.ratelimit import limit_login
 from app.workspaces.models import Workspace, WorkspaceMember
 from app.billing import service as billing
@@ -134,7 +134,7 @@ def logout(request: RefreshRequest):
         return {"ok": True}
 
 def _me(user: User) -> dict:
-    return {"id": user.id, "email": user.email, "name": user.name, "email_verified": user.email_verified_at is not None}
+    return {"id": user.id, "email": user.email, "name": user.name, "email_verified": user.email_verified_at is not None, "is_admin": is_admin(user)}
 
 
 def _revoke_all(session, user_id: int) -> None:
