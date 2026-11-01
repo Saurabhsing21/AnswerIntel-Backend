@@ -19,7 +19,7 @@ MAX_SUGGESTIONS = 8
 
 SYSTEM = """You find a company's direct competitors: products a buyer would compare it with before choosing.
 Search the web. Prefer companies that AI assistants and review sites commonly recommend in this category and market.
-Return JSON: {"competitors": [{"name", "website", "reason"}]} with up to 8 entries, most important first.
+Return JSON: {"competitors": [{"name", "website", "reason"}]} with exactly 8 entries, most important first (fewer only if fewer real competitors exist).
 - name: the brand name only. website: its homepage domain, like example.com.
 - reason: under 15 words, why buyers compare them (same audience, same job).
 Never include the company itself. Don't invent companies; return fewer if unsure."""
@@ -48,7 +48,7 @@ def suggest_competitors(brand: str, website: str, category: str, country: str, d
         f"About: {description or 'not given'}"
     )
     try:
-        data = chat(settings.analysis_model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
+        data = chat(settings.competitor_model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
                     web_search=True)  # no JSON mode: OpenAI rejects it alongside web search
         content = (data["choices"][0]["message"].get("content") or "").strip()
         content = content[content.find("{"):content.rfind("}") + 1]  # searched answers can wrap the JSON in prose

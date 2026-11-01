@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     free_check_engines: str = "chatgpt_search,perplexity"
     prompt_model: str = "openai/gpt-5.4-mini"  # one call per project, so quality wins here
     analysis_model: str = "openai/gpt-5.4-nano"  # runs on every answer
+    competitor_model: str = "openai/gpt-5.4-nano"  # one web-search call per new project to suggest 8 competitors
     provider_timeout_seconds: float = 90
     provider_max_retries: int = 2
     scan_concurrency: int = 4
