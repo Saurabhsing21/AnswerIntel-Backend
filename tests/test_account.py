@@ -72,7 +72,9 @@ def test_invite_by_email_then_accept_after_signup(client, outbox):
     sent = client.post(f"{API}/workspaces/{workspace}/members", json={"email": guest, "role": "admin"}, headers=owner).json()
     assert sent["invited"] is True
     assert [i["email"] for i in client.get(f"{API}/workspaces/{workspace}/invites", headers=owner).json()] == [guest]
-    token = token_in(next(m for m in outbox if m["to"] == guest))
+    invite_mail = next(m for m in outbox if m["to"] == guest)
+    assert "/invite?token=" in invite_mail["html"]
+    token = token_in(invite_mail)
 
     stranger = signup(client, "stranger")
     assert client.post(f"{API}/workspaces/invites/accept", json={"token": token}, headers=stranger).status_code == 403

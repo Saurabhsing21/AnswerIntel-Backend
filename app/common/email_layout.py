@@ -40,9 +40,11 @@ def email_html(
     items: list[str] | None = None,
     footer: str = "",
     preheader: str = "",
+    blocks: str = "",
 ) -> str:
     """`button`: (label, url). `eyebrow`: who this is about (the workspace). `stats`: up to 3 (value, label).
-    `items`: a short list, e.g. the questions a competitor took."""
+    `items`: a short list, e.g. the questions a competitor took.
+    `blocks`: ready-made, already escaped HTML placed after the paragraphs (the report email's own sections)."""
     context = f'<td align="right" class="muted" style="font-size:13px;color:{MUTED}">{escape(eyebrow)}</td>' if eyebrow else ""
     body = "".join(
         f'<p class="muted" style="margin:0 0 16px;font-size:15px;line-height:1.65;color:{MUTED}">{escape(p)}</p>' for p in paragraphs
@@ -105,7 +107,7 @@ def email_html(
 <tr><td class="card" style="background:#ffffff;border:1px solid {LINE};border-top:3px solid {MARK};border-radius:16px">
 <div class="pad" style="padding:36px 36px 34px">
 <h1 class="ink" style="margin:0 0 14px;font-size:26px;line-height:1.2;font-weight:700;letter-spacing:-0.025em;color:{INK}">{escape(heading)}</h1>
-{body}{stats_html}{items_html}{button_html}{fallback}
+{body}{stats_html}{items_html}{blocks}{button_html}{fallback}
 </div></td></tr>
 <tr><td style="padding:20px 4px 0">{footer_html}</td></tr>
 </table></td></tr></table>

@@ -31,6 +31,10 @@ def put_pdf(key: str, data: bytes) -> None:
     _s3().put_object(Bucket=settings.r2_bucket, Key=key, Body=data, ContentType="application/pdf")
 
 
+def get_pdf(key: str) -> bytes:
+    return _s3().get_object(Bucket=settings.r2_bucket, Key=key)["Body"].read()
+
+
 def signed_url(key: str, seconds: int = 300, disposition: str | None = None) -> str:
     """A temporary download link. `disposition` sets the Content-Disposition (file name) the browser sees."""
     params = {"Bucket": settings.r2_bucket, "Key": key}

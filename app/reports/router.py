@@ -16,6 +16,7 @@ from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.reports.email import send_report_email
+from app.reports.email_render import build_report_email
 from app.reports.document import score
 from app.reports.models import Report, ReportPdf
 from app.reports.pdf_jobs import queue_report_pdf
@@ -160,7 +161,8 @@ def revoke_share(project_id: UUID, report_id: int, current_user: User = Depends(
 def email_report(project_id: UUID, report_id: int, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         report = _get_report(session, project_id, report_id, current_user.id)
-        send_report_email(current_user.email, report_title(report), render_html(report.content, report_title(report)))
+        subject, html, attachments = build_report_email(session, report)
+        send_report_email(current_user.email, subject, html, attachments or None)
         report.emailed_at = datetime.now(timezone.utc)
         session.commit()
         return {"sent": True, "to": current_user.email}

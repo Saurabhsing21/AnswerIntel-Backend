@@ -130,7 +130,7 @@ ended" emails daily (`billing.trial_notices`), only for the legacy trials. Both 
 
 ## Known limits
 
-- Adding a workspace member works for existing accounts only; email invitations are not built.
+- Workspace invitations by email work (14-day link; the invitee must register or log in with the invited address). Adding an existing account skips the link.
 - Scan and report IDs are integers (the PRD sketches UUIDs); routes are nested under `/projects/{id}/...`.
 - The "ask my AI visibility" chat is intentionally not built (PRD section 99).
 - Billing has no tax/GST invoicing yet (Stripe Tax can be added later).

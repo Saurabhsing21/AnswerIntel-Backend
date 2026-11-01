@@ -10,8 +10,8 @@ from app.projects.models import Project
 from app.reports.email import send_report_email
 from app.reports.models import Report
 from app.reports.pdf_jobs import queue_report_pdf
-from app.reports.render import render_html
-from app.reports.service import create_report, report_title
+from app.reports.email_render import build_report_email
+from app.reports.service import create_report
 from app.scans.models import Scan
 from app.users.models import User
 
@@ -35,7 +35,8 @@ def deliver_scan_report(scan_id: int, report_type: str) -> None:
         queue_report_pdf(report.id)
         owner = session.get(User, project.user_id)
         try:
-            send_report_email(owner.email, report_title(report), render_html(report.content, report_title(report)))
+            subject, html, attachments = build_report_email(session, report)
+            send_report_email(owner.email, subject, html, attachments or None)
         except AppError as exc:
             log.info("Report %s kept but not emailed: %s", report.id, exc.code)
             return
