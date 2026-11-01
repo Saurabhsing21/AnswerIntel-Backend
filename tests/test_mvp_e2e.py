@@ -37,7 +37,7 @@ def test_mvp_loop_end_to_end(client):
     started = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
     assert started["status"] == "queued" and started["total_runs"] == len(active) * 3
     scan = client.get(f"{API}/projects/{project_id}/scans/{started['id']}", headers=headers).json()
-    assert scan["status"] == "completed" and scan["progress"] == 1 and scan["simulated"] is True
+    assert scan["status"] == "completed" and scan["progress"] == 1
 
     snapshot_prompts = client.get(f"{API}/projects/{project_id}/scans/{scan['id']}/prompts", headers=headers).json()
     assert len(snapshot_prompts) == len(active)

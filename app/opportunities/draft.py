@@ -3,6 +3,7 @@
 import logging
 
 from app.common.config import settings
+from app.common.errors import ai_unavailable
 from app.common.llm import LLMError, chat
 from app.costs.service import cost_scope
 from app.opportunities.models import Opportunity
@@ -24,25 +25,13 @@ def draft_for(project: Project, opportunity: Opportunity) -> dict:
         + (f"Buyer questions where AI leaves the brand out: {prompts}\n" if prompts else "")
         + "\nWrite the draft that carries out the recommended action."
     )
-    if settings.ai_enabled:
-        try:
-            with cost_scope(purpose="draft", workspace_id=project.workspace_id, project_id=project.id, user_id=project.user_id):
-                data = chat(settings.prompt_model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
-            text = (data["choices"][0]["message"].get("content") or "").strip()
-            if text:
-                return {"markdown": text, "generated": True}
-        except LLMError as exc:
-            log.warning("Draft generation failed, using the outline: %s", exc)
-    return {"markdown": _outline(project, opportunity), "generated": False}
-
-
-def _outline(project: Project, opportunity: Opportunity) -> str:
-    """Without an AI key: a structured outline the team can fill in."""
-    return (
-        f"# {opportunity.title}\n\n"
-        f"**Goal:** {opportunity.recommended_action}\n\n"
-        f"## Who {project.brand_name} is for\n[One paragraph: the buyer, their problem, and why {project.brand_name} fits.]\n\n"
-        f"## How {project.brand_name} compares\n[A short, honest comparison table against the alternatives buyers ask AI about.]\n\n"
-        "## Frequently asked questions\n[Answer the exact questions from this opportunity, one short paragraph each.]\n\n"
-        "## Proof\n[Customer quotes, reviews, numbers you can stand behind.]\n"
-    )
+    try:
+        with cost_scope(purpose="draft", workspace_id=project.workspace_id, project_id=project.id, user_id=project.user_id):
+            data = chat(settings.prompt_model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
+        text = (data["choices"][0]["message"].get("content") or "").strip()
+    except (LLMError, KeyError, IndexError):
+        log.warning("Draft generation failed", exc_info=True)
+        raise ai_unavailable()
+    if not text:
+        raise ai_unavailable()
+    return {"markdown": text}

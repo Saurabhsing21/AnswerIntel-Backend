@@ -1,6 +1,6 @@
 """Suggest a brand's top competitors, so founders don't have to know them up front.
 
-Asks a model with live web search; without an AI key it returns clearly-marked samples so the setup flow still works.
+Asks a model with live web search. If the AI service is unavailable the caller gets an error, never made-up names.
 """
 
 import json
@@ -10,17 +10,12 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, ValidationError
 
 from app.common.config import settings
+from app.common.errors import ai_unavailable
 from app.common.llm import LLMError, chat
 
 log = logging.getLogger(__name__)
 
 MAX_SUGGESTIONS = 8
-SAMPLES = [
-    ("Kiteline", "kiteline.io", ""),
-    ("Vantor", "vantor.app", ""),
-    ("Northwind", "northwind.dev", ""),
-    ("Brightloop", "brightloop.co", ""),
-]
 
 SYSTEM = """You find a company's direct competitors: products a buyer would compare it with before choosing.
 Search the web. Prefer companies that AI assistants and review sites commonly recommend in this category and market.
@@ -46,11 +41,8 @@ def _domain(url: str) -> str:
 
 
 def suggest_competitors(brand: str, website: str, category: str, country: str, description: str | None, exclude: set[str]) -> dict:
-    """`exclude`: lower-case names and domains already tracked. Returns {"suggestions": [...], "sample": bool}."""
+    """`exclude`: lower-case names and domains already tracked. Returns {"suggestions": [...]}."""
     own = _domain(website)
-    if not settings.ai_enabled:
-        rows = [{"name": n, "website": f"https://{w}", "reason": r} for n, w, r in SAMPLES]
-        return {"suggestions": [r for r in rows if r["name"].lower() not in exclude], "sample": True}
     user = (
         f"Company: {brand} ({website})\nCategory: {category}\nMarket: {country}\n"
         f"About: {description or 'not given'}"
@@ -63,7 +55,7 @@ def suggest_competitors(brand: str, website: str, category: str, country: str, d
         parsed = Suggestions.model_validate(json.loads(content))
     except (LLMError, json.JSONDecodeError, ValidationError, KeyError, IndexError):
         log.warning("Competitor suggestion failed for %s", brand, exc_info=True)
-        return {"suggestions": [], "sample": False}
+        raise ai_unavailable()
 
     seen: set[str] = set()
     out = []
@@ -74,4 +66,4 @@ def suggest_competitors(brand: str, website: str, category: str, country: str, d
             continue
         seen.add(key)
         out.append({"name": s.name.strip(), "website": f"https://{domain}", "reason": s.reason.strip()})
-    return {"suggestions": out[:MAX_SUGGESTIONS], "sample": False}
+    return {"suggestions": out[:MAX_SUGGESTIONS]}

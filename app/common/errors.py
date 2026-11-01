@@ -13,6 +13,11 @@ class AppError(Exception):
         self.limit = limit  # which plan limit was hit, so the UI can offer an upgrade
 
 
+def ai_unavailable() -> AppError:
+    """What users see whenever the AI service is not configured or a call to it failed."""
+    return AppError(503, "AI_UNAVAILABLE", "We couldn't reach the AI service. Try again in a minute.")
+
+
 def _body(code: str, message: str, limit: str | None = None) -> dict:
     # "detail" kept for backwards compatibility with existing clients and tests.
     error = {"code": code, "message": message}

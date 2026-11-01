@@ -6,16 +6,15 @@ from sqlalchemy.orm import Session
 from app.billing.plans import entitlements
 from app.billing.service import active_prompts
 from app.common.config import settings
+from app.common.errors import ai_unavailable
 from app.common.llm import LLMError
 from app.competitors.models import Competitor
 from app.costs.service import cost_scope
 from app.projects.models import Project
 from app.prompts.generator import (
-    InstructedTemplateGenerator,
     LLMPromptGenerator,
     PromptGenerator,
     PromptInput,
-    TemplatePromptGenerator,
     generate_prompts,
 )
 from app.prompts.models import Prompt, ScanPrompt
@@ -44,29 +43,22 @@ class PromptDiscoveryService:
     def _generate(self, data: PromptInput) -> tuple[list[dict], str]:
         if self.generator is not None:
             return generate_prompts(generator=self.generator, data=data), "template"
-        if settings.ai_enabled:
-            try:
-                return generate_prompts(generator=LLMPromptGenerator(), data=data), "ai"
-            except LLMError as exc:
-                log.warning("Prompt Discovery Agent failed, using templates: %s", exc)
-        return generate_prompts(generator=TemplatePromptGenerator(), data=data), "template"
+        try:
+            return generate_prompts(generator=LLMPromptGenerator(), data=data), "ai"
+        except LLMError as exc:
+            log.warning("Prompt Discovery Agent failed: %s", exc)
+            raise ai_unavailable()
 
-    def suggest(self, session: Session, project: Project, instructions: str, count: int) -> tuple[list[dict], bool]:
-        """New prompts written to the user's instructions, not saved: they pick which to keep.
-        Returns (candidates, sample); sample = no AI key, so these are simple stand-ins."""
+    def suggest(self, session: Session, project: Project, instructions: str, count: int) -> list[dict]:
+        """New prompts written to the user's instructions, not saved: they pick which to keep."""
         data = build_input(session, project)
         data.instructions = instructions
-        sample = not settings.ai_enabled
-        candidates: list[dict] = []
-        if not sample:
-            try:
-                with cost_scope(purpose="question_writing", workspace_id=project.workspace_id, project_id=project.id, user_id=project.user_id):
-                    candidates = generate_prompts(generator=LLMPromptGenerator(count=count), data=data)
-            except LLMError as exc:
-                log.warning("Instructed prompt generation failed: %s", exc)
-                raise
-        else:
-            candidates = generate_prompts(generator=InstructedTemplateGenerator(), data=data)
+        try:
+            with cost_scope(purpose="question_writing", workspace_id=project.workspace_id, project_id=project.id, user_id=project.user_id):
+                candidates = generate_prompts(generator=LLMPromptGenerator(count=count), data=data)
+        except LLMError as exc:
+            log.warning("Instructed prompt generation failed: %s", exc)
+            raise ai_unavailable()
         existing = {t.strip().lower() for t in session.scalars(select(Prompt.text).where(Prompt.project_id == project.id))}
         fresh = []
         for c in candidates:
@@ -74,7 +66,7 @@ class PromptDiscoveryService:
             if key not in existing:
                 existing.add(key)
                 fresh.append({"text": c["text"].strip(), "category": c["category"], "intent": c["intent"], "importance": c.get("importance")})
-        return fresh[:count], sample
+        return fresh[:count]
 
     def add_many(self, session: Session, project: Project, items: list[dict]) -> list[Prompt]:
         """Saves the prompts the user accepted. Duplicates are skipped; past the plan's pool they are added switched off."""

@@ -94,7 +94,6 @@ def _check(brand: str, website: str, category: str, country: str) -> dict:
         },
         "top_sources": [{"domain": d, "count": n} for d, n in sources.most_common(5)],
         "why": _safe(_why, website, [e.key for e in engines], missed) or [],
-        "simulated": provider.name == "simulated",
     }
 
 

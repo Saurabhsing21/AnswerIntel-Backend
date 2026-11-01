@@ -1,17 +1,19 @@
-"""Competitor suggestions for new projects: the model's list is cleaned, and samples are marked when AI is off."""
+"""Competitor suggestions for new projects: the model's list is cleaned, and a down AI service is an error, never made-up names."""
 
 import json
 
+import pytest
+
+from app.common.errors import AppError
 from app.competitors import suggest
 from tests.conftest import API, make_project, signup
 
 
-def test_samples_are_marked_when_no_ai_key(client):
+def test_no_ai_key_is_a_503_not_sample_names(client):
     headers = signup(client, "suggest")
     project_id = make_project(client, headers)
-    result = client.get(f"{API}/projects/{project_id}/competitors/suggestions", headers=headers).json()
-    assert result["sample"] is True
-    assert "kiteline" not in {s["name"].lower() for s in result["suggestions"]}  # already tracked by make_project
+    response = client.get(f"{API}/projects/{project_id}/competitors/suggestions", headers=headers)
+    assert response.status_code == 503 and response.json()["error"]["code"] == "AI_UNAVAILABLE"
 
 
 def test_model_suggestions_drop_the_brand_tracked_and_invented_entries(monkeypatch):
@@ -25,20 +27,25 @@ def test_model_suggestions_drop_the_brand_tracked_and_invented_entries(monkeypat
     monkeypatch.setattr(suggest.settings, "openrouter_api_key", "test-key")
     monkeypatch.setattr(suggest, "chat", lambda *a, **k: {"choices": [{"message": {"content": json.dumps(reply)}}]})
     result = suggest.suggest_competitors("Halden", "https://halden.co", "CRM", "US", None, {"kiteline", "kiteline.io"})
-    assert result == {"suggestions": [{"name": "Pipewise", "website": "https://pipewise.com", "reason": "Same buyers"}], "sample": False}
+    assert result == {"suggestions": [{"name": "Pipewise", "website": "https://pipewise.com", "reason": "Same buyers"}]}
 
 
-def test_a_failed_model_call_returns_nothing_instead_of_an_error(monkeypatch):
+def test_an_unreadable_model_answer_is_an_ai_unavailable_error(monkeypatch):
     monkeypatch.setattr(suggest.settings, "openrouter_api_key", "test-key")
     monkeypatch.setattr(suggest, "chat", lambda *a, **k: {"choices": [{"message": {"content": "not json"}}]})
-    assert suggest.suggest_competitors("Halden", "halden.co", "CRM", "US", None, set()) == {"suggestions": [], "sample": False}
+    with pytest.raises(AppError) as raised:
+        suggest.suggest_competitors("Halden", "halden.co", "CRM", "US", None, set())
+    assert raised.value.status_code == 503 and raised.value.code == "AI_UNAVAILABLE"
 
 
-def test_onboarding_suggests_competitors_before_a_project_exists(client):
+def test_onboarding_suggests_competitors_before_a_project_exists(client, monkeypatch):
+    reply = {"competitors": [{"name": "Pipewise", "website": "pipewise.com", "reason": "Same buyers"}]}
+    monkeypatch.setattr(suggest.settings, "openrouter_api_key", "test-key")
+    monkeypatch.setattr(suggest, "chat", lambda *a, **k: {"choices": [{"message": {"content": json.dumps(reply)}}]})
     headers = signup(client, "onboard")
     body = {"brand_name": " Halden ", "website": "halden.co", "category": "CRM", "country": "United States"}
     result = client.post(f"{API}/onboarding/competitors", json=body, headers=headers).json()
-    assert result["sample"] is True and result["suggestions"]
+    assert [s["name"] for s in result["suggestions"]] == ["Pipewise"]
     assert client.get(f"{API}/projects", headers=headers).json() == []  # nothing created yet
 
 

@@ -135,7 +135,7 @@ def test_generate_more_previews_prompts_from_instructions_then_adds_only_the_kep
     before = len(client.get(f"{API}/projects/{project_id}/prompts", headers=headers).json())
 
     preview = client.post(f"{API}/projects/{project_id}/prompts/suggest", json={"instructions": "marketing agencies", "count": 4}, headers=headers).json()
-    assert preview["sample"] is True and preview["prompts"]  # no AI key in tests: clearly marked stand-ins
+    assert preview["prompts"] and "sample" not in preview
     assert all("marketing agencies" in p["text"] for p in preview["prompts"])
     assert len(client.get(f"{API}/projects/{project_id}/prompts", headers=headers).json()) == before  # nothing saved yet
 

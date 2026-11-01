@@ -37,7 +37,6 @@ def serialize(scan: Scan) -> dict:
         "kind": scan.kind,  # "retest" = only one opportunity's prompts
         "opportunity_id": scan.opportunity_id,
         "provider": scan.provider,
-        "simulated": scan.provider == "simulated",
         "total_runs": scan.total_runs,
         "completed_runs": scan.completed_runs,
         "failed_runs": scan.failed_runs,

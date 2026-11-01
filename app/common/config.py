@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30  # PRD 6
 
-    # AI gateway. Empty key = simulated provider (clearly labelled in the API and UI).
+    # AI gateway. Empty key = AI features answer 503 AI_UNAVAILABLE; production refuses to boot without one.
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     # Swap an engine's model without a code change: "claude=anthropic/claude-sonnet-4.5,grok=x-ai/grok-4". The engines
@@ -110,7 +110,7 @@ class Settings(BaseSettings):
         # Billing on without a webhook secret would take payments that never reach the workspace's plan.
         if self.app_env == "production" and self.stripe_secret_key and not self.stripe_webhook_secret:
             raise ValueError("STRIPE_WEBHOOK_SECRET is required when STRIPE_SECRET_KEY is set and APP_ENV=production.")
-        # Without a key every scan is simulated and prompts come from templates: never acceptable for paying users.
+        # Without a key no scan or AI feature can run: never acceptable for paying users.
         # The waitlist-only launch site has no scans, so it may run without one.
         if self.app_env == "production" and not self.waitlist_only and not self.openrouter_api_key.strip():
             raise ValueError("OPENROUTER_API_KEY is required when APP_ENV=production (unless WAITLIST_ONLY=true).")

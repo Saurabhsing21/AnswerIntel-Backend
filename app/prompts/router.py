@@ -10,7 +10,6 @@ from app.common.config import settings
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
-from app.common.llm import LLMError
 from app.prompts.models import Prompt
 from app.prompts.schemas import PromptCreate, PromptsAccept, PromptSuggest, PromptUpdate
 from app.prompts.service import PromptDiscoveryService
@@ -64,11 +63,8 @@ def suggest(project_id: UUID, request: PromptSuggest, current_user: User = Depen
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
         require_pro(entitlements(session, project.workspace_id), "More prompts")
-        try:
-            prompts, sample = PromptDiscoveryService().suggest(session, project, request.instructions.strip(), request.count)
-        except LLMError:
-            raise AppError(502, "GENERATION_FAILED", "We couldn't write prompts just now. Please try again.")
-        return {"prompts": prompts, "sample": sample}
+        prompts = PromptDiscoveryService().suggest(session, project, request.instructions.strip(), request.count)
+        return {"prompts": prompts}
 
 
 @router.post("/accept")

@@ -92,8 +92,8 @@ def test_opportunity_draft(client):
         session.add(opp)
         session.commit()
         opp_id = opp.id
-    draft = client.post(f"{API}/projects/{project_id}/opportunities/{opp_id}/draft", headers=headers).json()
-    assert draft["generated"] is False and draft["markdown"].startswith("# Publish a comparison page")
+    draft = client.post(f"{API}/projects/{project_id}/opportunities/{opp_id}/draft", headers=headers)
+    assert draft.status_code == 503 and draft.json()["error"]["code"] == "AI_UNAVAILABLE"  # no key: never a canned outline
     assert client.post(f"{API}/projects/{project_id}/opportunities/999999/draft", headers=headers).status_code == 404
 
 
@@ -115,7 +115,7 @@ def test_free_check_runs_reuses_and_is_capped(client, monkeypatch):
     result = check["result"]
     assert len(result["prompts"]) == settings.free_check_prompts
     assert all("halden" not in p["text"].lower() for p in result["prompts"])  # unbranded questions only
-    assert result["summary"]["answers"] == settings.free_check_prompts * 2 and result["simulated"] is True
+    assert result["summary"]["answers"] == settings.free_check_prompts * 2
 
     assert client.post(f"{API}/free-check", json=body).json()["id"] == started.json()["id"]  # same site today: reused
     assert client.post(f"{API}/free-check", json={**body, "website": "not a site"}).status_code == 422

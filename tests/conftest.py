@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.common.config import settings
 from app.main import app
+from app.providers.registry import get_provider as real_get_provider
 
 API = "/api/v1"
 
@@ -32,6 +33,35 @@ def no_real_ai_keys(monkeypatch):
     """Keys in a developer's .env must never be used by tests: real AI calls cost money."""
     for key in ("openrouter_api_key", "dataforseo_login", "dataforseo_password", "resend_api_key", "stripe_secret_key"):
         monkeypatch.setattr(settings, key, "")
+
+
+@pytest.fixture(autouse=True)
+def simulated_ai(monkeypatch):
+    """Production has no path to made-up answers; tests install the simulated engines and template prompts explicitly.
+    Tests that exercise the "AI unavailable" paths use the `ai_down` fixture to undo this."""
+    from app.prompts.generator import InstructedTemplateGenerator, PromptGenerator, TemplatePromptGenerator
+    from tests.simulated_provider import SimulatedAIProvider
+
+    class TemplatePrompts(PromptGenerator):
+        def __init__(self, count: int = 40):
+            pass
+
+        def generate(self, data):
+            return (InstructedTemplateGenerator() if data.instructions else TemplatePromptGenerator()).generate(data)
+
+    for target in ("app.scans.execution.get_provider", "app.freecheck.service.get_provider"):
+        monkeypatch.setattr(target, SimulatedAIProvider)
+    monkeypatch.setattr("app.prompts.service.LLMPromptGenerator", TemplatePrompts)
+
+
+@pytest.fixture
+def ai_down(monkeypatch):
+    """The real wiring with no OpenRouter key: every AI feature must answer 503 AI_UNAVAILABLE."""
+    from app.prompts.generator import LLMPromptGenerator
+
+    monkeypatch.setattr("app.prompts.service.LLMPromptGenerator", LLMPromptGenerator)
+    for target in ("app.scans.execution.get_provider", "app.freecheck.service.get_provider"):
+        monkeypatch.setattr(target, real_get_provider)
 
 
 @pytest.fixture(autouse=True)

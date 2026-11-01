@@ -16,6 +16,7 @@ from app.billing.plans import engines_for, entitlements
 from app.providers.models import engines_for_prompt
 from app.common.config import settings
 from app.common.database import SessionLocal
+from app.common.errors import AppError
 from app.common.llm import PermanentLLMError
 from app.costs.service import cost_scope, finalize_scan_cost
 from app.common.database import engine as db_engine
@@ -64,7 +65,8 @@ class ScanExecutionService:
         model_registry: ModelRegistry | None = None,
         analysis_service: ResponseAnalysisService | None = None,
     ):
-        self.provider = provider or get_provider()
+        self._injected_provider = provider
+        self.provider = provider
         self.model_registry = model_registry or ModelRegistry()
         self.analysis_service = analysis_service or ResponseAnalysisService()
 
@@ -73,6 +75,7 @@ class ScanExecutionService:
             if not acquired:
                 return  # another worker is already running this scan
             try:
+                self.provider = self._injected_provider or get_provider()
                 self._run(scan_id)
             except Exception as exc:  # never leave a scan stuck in "running"
                 log.exception("Scan %s crashed", scan_id)
@@ -80,7 +83,7 @@ class ScanExecutionService:
                     scan = session.get(Scan, scan_id)
                     if scan and scan.status in ("queued", "running"):
                         scan.status = "failed"
-                        scan.error_message = f"Scan crashed: {exc.__class__.__name__}"
+                        scan.error_message = exc.message if isinstance(exc, AppError) else f"Scan crashed: {exc.__class__.__name__}"
                         scan.completed_at = datetime.now(timezone.utc)
                         finalize_scan_cost(session, scan)
                         session.commit()

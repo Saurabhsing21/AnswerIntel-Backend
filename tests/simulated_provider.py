@@ -4,8 +4,8 @@ from urllib.parse import urlparse
 
 from app.providers.base import AIProvider, AIResponse, ProviderContext
 
-# Used only when no OPENROUTER_API_KEY is configured. Responses are flagged
-# as simulated in the database, the API, and the dashboard.
+# Test-only stand-in for the real engines: conftest installs it as the provider.
+# No production setting selects it, so its answers can never reach a user.
 
 REASONS = [
     "fast to set up with a generous free plan",

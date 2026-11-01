@@ -1,4 +1,5 @@
 from app.common.config import settings
+from app.common.errors import ai_unavailable
 from app.providers.base import AIProvider
 from app.providers.models import ModelConfig, available_engines, engines_for_project
 
@@ -26,11 +27,9 @@ class ModelRegistry:
 
 
 def get_provider() -> AIProvider:
-    """Real engines when a key is configured, otherwise the labelled simulator."""
-    if settings.ai_enabled:
-        from app.providers.openrouter import OpenRouterProvider
+    """The real engines. Without a key there is nothing to fall back to: say so instead of inventing answers."""
+    if not settings.ai_enabled:
+        raise ai_unavailable()
+    from app.providers.openrouter import OpenRouterProvider
 
-        return OpenRouterProvider()
-    from app.providers.simulated import SimulatedAIProvider
-
-    return SimulatedAIProvider()
+    return OpenRouterProvider()
