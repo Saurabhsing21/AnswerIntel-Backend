@@ -7,9 +7,10 @@ from sqlalchemy import delete, select
 
 from app.common.config import settings
 from app.common.database import SessionLocal
+from app.billing.models import Subscription
 from app.costs.models import AICall
 from app.users.models import User
-from app.workspaces.models import WorkspaceMember
+from app.workspaces.models import Workspace, WorkspaceMember
 from tests.conftest import API, make_project, signup
 
 
@@ -103,5 +104,43 @@ def test_recent_scans_and_margin(client, admin):
     body = client.get(f"{API}/admin/costs", headers=headers).json()
     assert len(body["recent_scans"]) <= 20
     assert all({"cost", "ai_calls", "web_searches", "brand"} <= set(s) for s in body["recent_scans"])
-    for row in body["margin_by_plan"]:
-        assert row["margin"] == pytest.approx(row["revenue"] - row["ai_spend"])
+
+
+def test_margin_by_plan_exact(client, admin, calls):
+    """Seed workspaces on known subscriptions; compare against the report from before, since the shared DB has other rows."""
+    headers, _ = admin
+    plan_row = lambda body, plan: next((r for r in body["margin_by_plan"] if r["plan"] == plan), dict(active_workspaces=0, revenue=0, ai_spend=0, margin=0))
+    before = client.get(f"{API}/admin/costs", headers=headers).json()
+
+    cases = [("starter", "active", "month", 7), ("growth", "active", "year", 11), ("pro", "canceled", "month", 13), (None, None, None, 17)]
+    ids = []
+    try:
+        with SessionLocal() as session:
+            for plan, status, interval, _spend in cases:
+                workspace = Workspace(name=f"margin-{uuid.uuid4().hex[:6]}")
+                session.add(workspace)
+                session.flush()
+                ids.append(workspace.id)
+                if plan:
+                    session.add(Subscription(workspace_id=workspace.id, plan=plan, status=status, interval=interval))
+            session.commit()
+        for workspace_id, (_, _, _, spend) in zip(ids, cases):
+            calls(workspace_id, spend, "margin-test")
+        after = client.get(f"{API}/admin/costs", headers=headers).json()
+
+        def delta(plan, field):
+            return plan_row(after, plan)[field] - plan_row(before, plan)[field]
+
+        # monthly Starter: 20 revenue, 7 spend
+        assert (delta("starter", "active_workspaces"), delta("starter", "revenue"), delta("starter", "ai_spend"), delta("starter", "margin")) == (1, pytest.approx(20), pytest.approx(7), pytest.approx(13))
+        # yearly Growth: 480 / 12 = 40 revenue, 11 spend
+        assert (delta("growth", "active_workspaces"), delta("growth", "revenue"), delta("growth", "ai_spend"), delta("growth", "margin")) == (1, pytest.approx(40), pytest.approx(11), pytest.approx(29))
+        # canceled Pro: no revenue, not counted, but its spend still costs us
+        assert (delta("pro", "active_workspaces"), delta("pro", "revenue"), delta("pro", "ai_spend"), delta("pro", "margin")) == (0, pytest.approx(0), pytest.approx(13), pytest.approx(-13))
+        # no subscription at all: spend only
+        assert (delta("none", "active_workspaces"), delta("none", "revenue"), delta("none", "ai_spend"), delta("none", "margin")) == (0, pytest.approx(0), pytest.approx(17), pytest.approx(-17))
+    finally:
+        # ai_calls.workspace_id is SET NULL on delete; the `calls` fixture removes those rows afterwards by id.
+        with SessionLocal() as session:
+            session.execute(delete(Workspace).where(Workspace.id.in_(ids)))
+            session.commit()
