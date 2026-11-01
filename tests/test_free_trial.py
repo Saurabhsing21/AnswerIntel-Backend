@@ -66,16 +66,25 @@ def ready_trial(client, outbox):
     return headers, project_id
 
 
-def test_trial_engines_are_capped_at_three_and_premium_ones_are_locked(client, outbox, trial_signups):
+def test_trial_scans_chatgpt_search_only_and_other_engines_name_their_plan(client, outbox, trial_signups):
     headers, project_id = ready_trial(client, outbox)
     project = client.get(f"{API}/projects/{project_id}", headers=headers).json()
-    assert len(project["engines"]) <= 3 and not {"claude", "grok", "google"} & set(project["engines"])
+    assert project["engines"] == ["chatgpt_search"]
 
-    claude = client.put(f"{API}/projects/{project_id}", json={"engines": ["grok"]}, headers=headers)
-    assert claude.status_code == 402 and claude.json()["error"]["limit"] == "engines"
-    four = client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt", "gemini", "perplexity", "llama"]}, headers=headers)
-    assert four.status_code == 402
-    assert client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt", "llama", "qwen"]}, headers=headers).status_code == 200
+    perplexity = client.put(f"{API}/projects/{project_id}", json={"engines": ["perplexity"]}, headers=headers)
+    assert perplexity.status_code == 402 and perplexity.json()["error"]["limit"] == "engines"
+    assert perplexity.json()["error"]["message"] == "Perplexity is on the Starter plan."
+    claude = client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt_search", "claude"]}, headers=headers)
+    assert claude.json()["error"]["message"] == "Claude is on the Growth plan."
+    gemini = client.put(f"{API}/projects/{project_id}", json={"engines": ["gemini"]}, headers=headers)
+    assert gemini.json()["error"]["message"] == "Gemini is on the Pro plan."
+    assert client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt_search"]}, headers=headers).status_code == 200
+
+    workspace = client.get(f"{API}/workspaces", headers=headers).json()[0]["id"]
+    limits = client.get(f"{API}/workspaces/{workspace}/billing", headers=headers).json()["limits"]
+    assert limits["allowed_engines"] == ["chatgpt_search"]
+    assert limits["engine_upgrades"]["perplexity"] == "starter" and limits["engine_upgrades"]["claude"] == "growth"
+    assert limits["engine_upgrades"]["gemini"] == "pro" and "chatgpt_search" not in limits["locked_engines"]
 
 
 def test_paid_features_answer_with_an_upgrade_on_the_trial(client, outbox, trial_signups):

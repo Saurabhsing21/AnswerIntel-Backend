@@ -43,8 +43,8 @@ def create_project(
         require_room(ent, "projects", project_count(session, workspace_id), f"Your plan includes {ent.projects} project(s).")
         if request.engines is not None:
             check_engine_choice(ent, request.engines)
-        elif ent.locked_engines or ent.engines is not None:  # the free trial starts on engines it can actually use
-            request.engines = [e.key for e in engines_for(engines_for_project(None), ent)]
+        else:  # new projects start on the default engines the plan allows
+            request.engines = [e.key for e in engines_for(engines_for_project(None), ent)] or None
 
         project = Project(
             workspace_id=workspace_id,

@@ -126,7 +126,7 @@ def test_db_failure_does_not_break_chat(ai_on, monkeypatch):
 
 
 def test_threaded_scan_rows_carry_scan_attribution(client, ai_on, monkeypatch):
-    registry = ModelRegistry([ModelConfig("one", "test/scan-model", "One"), ModelConfig("two", "test/scan-model-2", "Two")])
+    registry = ModelRegistry([ModelConfig("chatgpt_search", "test/scan-model", "One"), ModelConfig("perplexity", "test/scan-model-2", "Two")])
     def post(url, json=None, headers=None, timeout=None):
         content = '{"brands": []}' if json.get("response_format") else "1. Halden is great."
         return FakeResponse(200, ok_body(content=content))
@@ -145,7 +145,7 @@ def test_threaded_scan_rows_carry_scan_attribution(client, ai_on, monkeypatch):
         assert session.get(Scan, scan_id).completed_runs > 0
         rows = list(session.scalars(select(AICall).where(AICall.scan_id == scan_id)))
     assert {r.purpose for r in rows} == {"scan_answer", "answer_analysis"}
-    assert {r.engine for r in rows} == {"one", "two"}
+    assert {r.engine for r in rows} == {"chatgpt_search", "perplexity"}
     assert all(str(r.project_id) == project_id and r.workspace_id == workspace_id for r in rows)
 
 
@@ -230,7 +230,7 @@ def test_scan_totals_match_ledger_and_finalize_is_idempotent(client, ai_on, monk
     from app.costs.service import finalize_scan_cost
     from app.reports.service import create_report
 
-    registry = ModelRegistry([ModelConfig("one", "test/tot-model", "One")])
+    registry = ModelRegistry([ModelConfig("chatgpt_search", "test/tot-model", "One")])
 
     def post(url, json=None, headers=None, timeout=None):
         content = '{"brands": []}' if json.get("response_format") else "1. Halden is great."

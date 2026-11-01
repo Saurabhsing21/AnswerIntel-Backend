@@ -32,14 +32,14 @@ def openrouter(monkeypatch):
 def test_new_projects_scan_the_default_engines_with_web_search(monkeypatch):
     monkeypatch.setattr(settings, "dataforseo_login", "")
     engines = {e.key: e.web_search for e in engines_for_project(None)}
-    assert engines == {"chatgpt_search": True, "gemini": True, "perplexity": False}  # Google AI Mode needs DataForSEO
+    assert engines == {"chatgpt_search": True, "perplexity": False}
 
 
 def test_google_ai_mode_is_coming_soon_even_when_dataforseo_is_configured(monkeypatch):
     monkeypatch.setattr(settings, "dataforseo_login", "me@example.com")
     monkeypatch.setattr(settings, "dataforseo_password", "secret")
     assert not [e for e in engines_for_project(["google", "claude"]) if e.key == "google"]
-    monkeypatch.setattr("app.providers.models.PAUSED", {"claude"})  # once un-paused, credentials switch it on
+    monkeypatch.setattr("app.providers.models.PAUSED", set())  # once un-paused, credentials switch it on
     google = [e for e in engines_for_project(["google"]) if e.key == "google"]
     assert len(google) == 1 and google[0].model == GOOGLE_AI_MODEL and google[0].display_name == "Google AI Mode"
 
@@ -54,18 +54,19 @@ def test_projects_choose_their_engines_and_scans_use_only_those(client):
     catalog = client.get(f"{API}/engines", headers=headers).json()
     assert {"chatgpt", "claude", "grok", "llama", "mistral", "deepseek", "qwen", "copilot"} <= {e["key"] for e in catalog}
     assert next(e for e in catalog if e["key"] == "copilot")["available"] is False
-    assert next(e for e in catalog if e["key"] == "claude")["available"] is False  # paused for now
+    assert next(e for e in catalog if e["key"] == "claude")["available"] is True
+    assert next(e for e in catalog if e["key"] == "google")["available"] is False  # paused for now
 
     project_id = make_project(client, headers)
     assert client.put(f"{API}/projects/{project_id}", json={"engines": ["copilot"]}, headers=headers).status_code == 422
     assert client.put(f"{API}/projects/{project_id}", json={"engines": []}, headers=headers).status_code == 422
-    updated = client.put(f"{API}/projects/{project_id}", json={"engines": ["llama", "chatgpt", "llama"]}, headers=headers).json()
-    assert updated["engines"] == ["chatgpt", "llama"]
+    updated = client.put(f"{API}/projects/{project_id}", json={"engines": ["perplexity", "chatgpt_search", "perplexity"]}, headers=headers).json()
+    assert updated["engines"] == ["chatgpt_search", "perplexity"]
 
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
     answers = client.get(f"{API}/projects/{project_id}/scans/{scan['id']}/responses", headers=headers).json()
-    assert {a["engine"] for a in answers} == {"chatgpt", "llama"}
+    assert {a["engine"] for a in answers} == {"chatgpt_search", "perplexity"}
 
 
 def test_web_search_and_country_reach_the_request(openrouter):
@@ -110,20 +111,20 @@ def test_google_ai_mode_without_an_ai_answer_is_an_empty_answer(monkeypatch):
 def test_a_prompt_can_run_on_fewer_engines_than_the_project(client):
     headers = signup(client, "prompt-engines")
     project_id = make_project(client, headers)
-    client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt", "llama", "grok"]}, headers=headers)
+    client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt_search", "perplexity", "claude"]}, headers=headers)
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
     prompts = [p for p in client.get(f"{API}/projects/{project_id}/prompts", headers=headers).json() if p["is_active"]]
     assert all(p["engines"] is None for p in prompts)
 
-    narrowed = client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": ["grok", "llama"]}, headers=headers).json()
-    assert narrowed["engines"] == ["grok", "llama"]
+    narrowed = client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": ["claude", "perplexity"]}, headers=headers).json()
+    assert narrowed["engines"] == ["claude", "perplexity"]
     assert client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": ["copilot"]}, headers=headers).status_code == 422
 
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
     assert scan["total_runs"] == (len(prompts) - 1) * 3 + 2
     answers = client.get(f"{API}/projects/{project_id}/scans/{scan['id']}/responses", headers=headers).json()
     first = [a for a in answers if a["prompt"] == prompts[0]["text"]]
-    assert {a["engine"] for a in first} == {"grok", "llama"}
+    assert {a["engine"] for a in first} == {"claude", "perplexity"}
 
     reset = client.patch(f"{API}/projects/{project_id}/prompts/{prompts[0]['id']}", json={"engines": []}, headers=headers).json()
     assert reset["engines"] is None  # back to every project engine

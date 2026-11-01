@@ -35,7 +35,7 @@ def test_mvp_loop_end_to_end(client):
 
     # 7-13. Scan: query engines, store raw responses, analyze, detect brand/competitors, extract citations
     started = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
-    assert started["status"] == "queued" and started["total_runs"] == len(active) * 3
+    assert started["status"] == "queued" and started["total_runs"] == len(active) * 2
     scan = client.get(f"{API}/projects/{project_id}/scans/{started['id']}", headers=headers).json()
     assert scan["status"] == "completed" and scan["progress"] == 1
 
@@ -58,7 +58,7 @@ def test_mvp_loop_end_to_end(client):
     for key in ("mention_rate", "recommendation_rate", "share_of_voice", "citation_rate"):
         assert 0 <= v[key] <= 1
     assert v["recommendation_rate"] <= v["mention_rate"]
-    assert {e["key"] for e in dashboard["engines"]} == {"chatgpt_search", "perplexity", "gemini"}
+    assert {e["key"] for e in dashboard["engines"]} == {"chatgpt_search", "perplexity"}
     assert any(r["is_you"] for r in dashboard["competitors"]) and len(dashboard["competitors"]) == 4
     assert abs(sum(r["share_of_voice"] for r in dashboard["competitors"]) - 1) < 0.01
 

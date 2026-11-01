@@ -9,7 +9,7 @@ from app.scans.models import Scan
 from app.scans.service import ScanService
 from tests.conftest import API, make_project, signup
 
-ENGINES = ModelRegistry([ModelConfig("good", "good-model", "Good"), ModelConfig("bad", "bad-model", "Bad")])
+ENGINES = ModelRegistry([ModelConfig("chatgpt_search", "good-model", "Good"), ModelConfig("perplexity", "bad-model", "Bad")])
 
 
 class FlakyProvider(AIProvider):
