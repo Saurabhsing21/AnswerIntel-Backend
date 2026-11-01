@@ -290,7 +290,7 @@ class DeleteAccount(BaseModel):
     google_credential: str | None = None
 
 
-@router.delete("/me")
+@router.delete("/me", dependencies=[Depends(limit_login)])
 def delete_me(payload: DeleteAccount, current_user: User = Depends(get_current_user)):
     """Permanent. Confirmed with the password, or with a fresh Google sign-in for accounts that never set one."""
     if payload.password is not None:

@@ -68,3 +68,11 @@ def test_a_broken_redis_does_not_take_the_api_down(monkeypatch):
     monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0")
     monkeypatch.setattr(ratelimit.limiter, "_redis", broken)
     assert ratelimit.limiter.allow("k", 1, 60) is True  # fail open: protection is lost, availability is not
+
+
+def test_account_deletion_guesses_are_limited(client):
+    headers = signup(client, "ratedel")
+    statuses = [client.request("DELETE", f"{API}/auth/me", json={"password": "wrong-password"}, headers=headers).status_code for _ in range(7)]
+    assert statuses[:4] == [400] * 4  # signup's own login used one of the five attempts
+    assert 429 in statuses and statuses[-1] == 429
+    assert client.get(f"{API}/auth/me", headers=headers).status_code == 200
