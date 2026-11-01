@@ -189,3 +189,33 @@ def test_concurrent_starts_for_a_one_scan_workspace_create_exactly_one_scan(clie
     assert outcomes[1] == "started" and outcomes[0] in ("PLAN_LIMIT", "SCAN_ALREADY_RUNNING", "SCAN_LIMIT_REACHED")
     with SessionLocal() as session:
         assert session.scalar(select(func.count()).select_from(Scan).where(Scan.project_id == uuid.UUID(project_id))) == 1
+
+
+def test_onboarding_site_without_categories_is_fast_and_skips_the_ai(client, monkeypatch):
+    headers = signup(client, "sitefast")
+    page = "<title>Halden | CRM</title><meta name='description' content='CRM for startups'>"
+    monkeypatch.setattr("app.onboarding.router.safe_get", lambda url: (200, page))
+
+    def boom(*a, **k):
+        raise AssertionError("AI must not be called")
+
+    monkeypatch.setattr("app.onboarding.router.chat", boom)
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    res = client.get(f"{API}/onboarding/site", params={"url": "halden.co", "categories": "false"}, headers=headers)
+    assert res.status_code == 200
+    assert res.json() == {"name": "Halden", "description": "CRM for startups", "categories": []}
+
+
+def test_onboarding_categories_endpoint_returns_ai_categories_and_is_budget_guarded(client, monkeypatch):
+    headers = signup(client, "catsok")
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    reply = {"choices": [{"message": {"content": '{"categories": ["CRM software for startups", " Sales tools ", "", "Pipeline app", "extra"]}'}}]}
+    monkeypatch.setattr("app.onboarding.router.chat", lambda *a, **k: reply)
+    res = client.post(f"{API}/onboarding/categories", headers=headers, json={"name": "Halden", "description": "CRM"})
+    assert res.status_code == 200
+    assert res.json() == {"categories": ["CRM software for startups", "Sales tools", "Pipeline app"]}
+    assert client.post(f"{API}/onboarding/categories", headers=headers, json={}).json() == {"categories": []}
+
+    capped, _ = capped_project(client, "catscap")
+    res = client.post(f"{API}/onboarding/categories", headers=capped, json={"name": "Halden"})
+    assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text

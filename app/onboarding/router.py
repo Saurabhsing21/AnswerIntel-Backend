@@ -78,8 +78,8 @@ def _categories(name: str | None, description: str | None, user_id: int | None =
 
 
 @router.get("/site")
-def site(url: str, current_user: User = Depends(get_current_user)):
-    """What a website says about itself: name, description and suggested categories, to prefill setup."""
+def site(url: str, categories: bool = True, current_user: User = Depends(get_current_user)):
+    """What a website says about itself: name and description, to prefill setup. `categories=false` skips the AI call so it returns fast."""
     target = url if "://" in url else f"https://{url}"
     got = safe_get(target)
     if not got or got[0] >= 400:
@@ -88,6 +88,23 @@ def site(url: str, current_user: User = Depends(get_current_user)):
     title = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
     name = _meta(page, "og:site_name") or (re.split(r"\s[|\-–—:]\s", html.unescape(title.group(1)).strip())[0] if title else None)
     description = _meta(page, "og:description", "description")
-    if settings.ai_enabled and (name or description):
-        _guard_budget(current_user.id)  # the category lookup below is an AI call
-    return {"name": name[:100] if name else None, "description": description[:300] if description else None, "categories": _categories(name, description, current_user.id)}
+    found: list[str] = []
+    if categories:
+        if settings.ai_enabled and (name or description):
+            _guard_budget(current_user.id)  # the category lookup below is an AI call
+        found = _categories(name, description, current_user.id)
+    return {"name": name[:100] if name else None, "description": description[:300] if description else None, "categories": found}
+
+
+class CategoryRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/categories")
+def categories(payload: CategoryRequest, current_user: User = Depends(get_current_user)):
+    """Suggested categories for a brand, as its own call so the site lookup does not wait for the AI."""
+    if settings.ai_enabled and (payload.name or payload.description):
+        _guard_budget(current_user.id)
+    return {"categories": _categories(payload.name, payload.description, current_user.id)}
