@@ -23,6 +23,7 @@ def save_analysis(
             reason=result["recommendation"].get("reason"),
             evidence=result["recommendation"].get("evidence"),
             analysis_method=result.get("method", "heuristic"),
+            other_brands=result.get("other_brands") or [],
         )
     )
     for competitor in result["competitors"]:

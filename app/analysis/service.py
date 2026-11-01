@@ -21,6 +21,7 @@ class ResponseAnalysisService:
         citations: list[str] | None = None,
     ):
         method = "heuristic"
+        other_brands: list[str] = []
         brand = analyze_name(response, context.brand_name, context.aliases)
         competitors = {c["id"]: analyze_name(response, c["name"]) for c in context.competitors}
 
@@ -30,6 +31,7 @@ class ResponseAnalysisService:
 
                 llm = analyze_with_llm(response, context)
                 brand, competitors, method = llm["brand"], llm["competitors"], "llm"
+                other_brands = llm.get("other_brands", [])
             except LLMError as exc:
                 log.warning("LLM analysis failed, using heuristics: %s", exc)
 
@@ -54,4 +56,5 @@ class ResponseAnalysisService:
                 for c in context.competitors
             ],
             "citations": self.citation_analyzer.analyze(response, context, extra_urls=citations),
+            "other_brands": other_brands,
         }

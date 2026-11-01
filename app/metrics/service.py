@@ -34,6 +34,7 @@ class Observation:
     brand: dict
     competitors: dict[int, dict] = field(default_factory=dict)
     citations: list[dict] = field(default_factory=list)
+    other_brands: list[str] = field(default_factory=list)  # recommended but not tracked
 
 
 def load_observations(session: Session, scan_id: int) -> list[Observation]:
@@ -51,6 +52,7 @@ def load_observations(session: Session, scan_id: int) -> list[Observation]:
     for o in session.scalars(select(CompetitorObservation).where(CompetitorObservation.ai_response_id.in_(ids))):
         comps[o.ai_response_id][o.competitor_id] = {
             "mentioned": o.mentioned, "recommended": o.recommended, "position": o.position, "sentiment": o.sentiment,
+            "reason": o.reason, "evidence": o.evidence,
         }
     cites: dict[int, list[dict]] = defaultdict(list)
     for c in session.scalars(select(Citation).where(Citation.ai_response_id.in_(ids))):
@@ -72,6 +74,7 @@ def load_observations(session: Session, scan_id: int) -> list[Observation]:
             },
             competitors=comps[r.AIResponseRecord.id],
             citations=cites[r.AIResponseRecord.id],
+            other_brands=r.Mention.other_brands or [],
         )
         for r in rows
     ]

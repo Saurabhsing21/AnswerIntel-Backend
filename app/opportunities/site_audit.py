@@ -10,6 +10,8 @@ from app.common.safe_http import safe_get
 AI_AGENTS = ("GPTBot", "ChatGPT-User", "PerplexityBot", "Google-Extended", "ClaudeBot", "CCBot")
 CORE_AGENTS = {"GPTBot", "PerplexityBot", "Google-Extended"}
 MIN_TEXT_CHARS = 300
+# Big homepages put JSON-LD late (one real site starts it at byte ~200,085), so read up to 2 MB.
+MAX_PAGE_BYTES = 2_000_000
 
 _NON_CONTENT = re.compile(r"<(script|style|noscript)\b.*?</\1>", re.I | re.S)
 _TAGS = re.compile(r"<[^>]+>")
@@ -21,7 +23,7 @@ def _visible_text(html: str) -> str:
 
 def audit_site(url: str, fetch: Callable[[str], tuple[int, str] | None] | None = None) -> dict | None:
     """Findings about the site, or None when it cannot be judged (unreachable, blocked, error page)."""
-    fetch = fetch or (lambda target: safe_get(target))
+    fetch = fetch or (lambda target: safe_get(target, max_bytes=MAX_PAGE_BYTES))
     home = fetch(url)
     if not home or home[0] >= 400:
         return None  # unreachable is not evidence of a technical gap
@@ -53,7 +55,9 @@ def audit_site(url: str, fetch: Callable[[str], tuple[int, str] | None] | None =
             "action": "Publish an llms.txt that describes what you do and links your key pages.",
         })
 
-    if "application/ld+json" not in home[1].lower():
+    # A page cut off at the read limit may still have JSON-LD further down: only judge a page read in full.
+    read_in_full = len(home[1].encode("utf-8")) < MAX_PAGE_BYTES
+    if read_in_full and "application/ld+json" not in home[1].lower():
         findings.append({
             "code": "NO_STRUCTURED_DATA",
             "impact": "medium",

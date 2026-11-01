@@ -20,6 +20,8 @@ class BrandVerdict(BaseModel):
 
 class AnalysisOutput(BaseModel):
     brands: list[BrandVerdict] = Field(max_length=120)  # the brand plus up to 100 competitors on Pro
+    # Brands the answer recommends that are not in the list: the competitors the user is not tracking yet.
+    other_brands: list[str] = Field(default_factory=list, max_length=30)
 
 
 SYSTEM = """You analyze an AI assistant's answer to a buyer's question for a brand-visibility tool.
@@ -33,7 +35,10 @@ For EACH brand listed, decide:
 - sentiment: how the answer talks about that brand specifically (positive, neutral, negative), null if not mentioned.
 - reason: one short phrase on why it was or was not recommended.
 - evidence: the single sentence from the answer that best supports the verdict, copied word for word; null if not mentioned.
-Return JSON: {"brands": [{"name", "mentioned", "recommended", "position", "sentiment", "reason", "evidence"}]} covering exactly the listed brands."""
+Also list in "other_brands" the names of other brands, companies or products the answer recommends that are NOT in the
+list (empty list if none). Use the name as written in the answer; do not include generic terms or the listed brands.
+Return JSON: {"brands": [{"name", "mentioned", "recommended", "position", "sentiment", "reason", "evidence"}], "other_brands": [...]}
+covering exactly the listed brands in "brands"."""
 
 
 def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
@@ -62,4 +67,15 @@ def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
             "mention_count": len(name_pattern(name).findall(text)),
         }
 
-    return {"brand": verdict(context.brand_name), "competitors": {c["id"]: verdict(c["name"]) for c in context.competitors}}
+    listed = {n.lower() for n in [*names, *context.aliases]}
+    # Untrusted output: keep only names that really appear in the answer and are not already tracked.
+    others = []
+    for raw in output.other_brands:
+        name = raw.strip()[:100]
+        if name and name.lower() not in listed and name.lower() not in {o.lower() for o in others} and name_pattern(name).search(text):
+            others.append(name)
+    return {
+        "brand": verdict(context.brand_name),
+        "competitors": {c["id"]: verdict(c["name"]) for c in context.competitors},
+        "other_brands": others,
+    }

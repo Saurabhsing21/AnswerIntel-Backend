@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -26,6 +26,8 @@ class Mention(Base):
     # The sentence in the answer behind the verdict, shown highlighted so people see why AI picked a brand.
     evidence: Mapped[str | None] = mapped_column(Text, nullable=True)
     analysis_method: Mapped[str] = mapped_column(String(20), nullable=False, default="heuristic", server_default="heuristic")
+    # Brands the answer recommended that the project does not track (LLM analysis only).
+    other_brands: Mapped[list] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

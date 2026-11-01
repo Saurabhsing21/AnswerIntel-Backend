@@ -53,8 +53,11 @@ def test_opportunity_rules_fire_on_evidence():
         obs(6, "chatgpt", "CATEGORY", (True, False, None, "neutral"), {}, [cite("producthunt.com")], "Best CRM"),
         obs(8, "chatgpt", "CATEGORY", (True, False, None, "neutral"), {}, [], "Top CRM"),
     ]
-    types = {o["type"] for o in detect(observations, "Halden", {1: "Kiteline"})}
-    assert {"COMPETITOR_GAP", "CITATION_GAP", "CONTENT_GAP", "POSITIONING_GAP", "COMPARISON_GAP"} <= types
+    found = {o["type"]: o for o in detect(observations, "Halden", {1: "Kiteline"})}
+    assert {"CITATION_GAP", "CONTENT_GAP", "POSITIONING_GAP", "COMPARISON_GAP"} <= set(found)
+    # The alternatives questions where Halden is invisible are one content gap, not repeated as a competitor gap.
+    assert "COMPETITOR_GAP" not in found
+    assert [w["name"] for q in found["CONTENT_GAP"]["evidence"]["questions"] for w in q["winners"]] == ["Kiteline", "Kiteline"]
     gap = next(o for o in detect(observations, "Halden", {1: "Kiteline"}) if o["type"] == "CITATION_GAP")
     assert gap["evidence"]["domains"][0]["domain"] == "g2.com"
 

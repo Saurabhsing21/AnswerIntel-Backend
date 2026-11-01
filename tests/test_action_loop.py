@@ -45,18 +45,18 @@ def test_a_gap_that_disappears_is_reported_as_resolved(client):
     headers = signup(client, "resolved")
     project_id = make_project(client, headers)
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
-    scan_and_wait(client, headers, project_id)
-    before = opportunities(client, headers, project_id)
-
-    real = service.detect
+    real, first = service.detect, []
     try:
-        service.detect = lambda *a, **k: real(*a, **k)[1:]  # the top gap is fixed by the next scan
+        # Simulated answers vary between scans, so the second scan replays the first one's gaps minus the top one.
+        service.detect = lambda *a, **k: first.extend(real(*a, **k)) or list(first)
+        scan_and_wait(client, headers, project_id)
+        service.detect = lambda *a, **k: [dict(x, evidence=dict(x["evidence"])) for x in first[1:]]
         scan_and_wait(client, headers, project_id)
     finally:
         service.detect = real
     after = opportunities(client, headers, project_id)
     resolved = [o for o in after if o["trend"] == "resolved"]
-    assert [o["title"] for o in resolved] == [before[0]["title"]] and resolved[0]["status"] == "completed"
+    assert [o["title"] for o in resolved] == [first[0]["title"]] and resolved[0]["status"] == "completed"
 
 
 def test_retest_asks_only_that_opportunitys_prompts_and_reports_before_and_after(client):
@@ -100,10 +100,10 @@ def test_competitor_steps_name_the_page_and_the_domains_behind_the_answer():
             competitors={7: {"mentioned": True, "recommended": comp_rec, "position": 1, "sentiment": "positive"}},
             citations=[{"domain": d, "is_brand_owned": False, "competitor_id": None} for d in domains],
         )
-    found = detect([obs(i, False, True, ["g2.com", "zapier.com"]) for i in range(3)], "Halden", {7: "Kiteline"})
+    found = detect([obs(0, True, False, [])] + [obs(i, False, True, ["g2.com", "zapier.com"]) for i in range(1, 4)], "Halden", {7: "Kiteline"})
     gap = next(f for f in found if f["type"] == "COMPETITOR_GAP")
     steps = " ".join(gap["evidence"]["steps"])
-    assert "/halden-vs-kiteline" in steps and "g2.com" in steps and gap["evidence"]["effort"] == "M"
+    assert "category discovery guide" in steps and '"best crm 1"' in steps and "g2.com" in steps and gap["evidence"]["effort"] == "M"
 
 
 def test_first_scan_sends_a_ready_email_once(client, outbox):

@@ -20,7 +20,9 @@ from app.costs.service import check_budget
 from app.metrics.models import MetricSnapshot
 from app.opportunities.draft import draft_for
 from app.opportunities.models import Opportunity
-from app.opportunities.service import AREAS, IMPACT_ORDER
+from app.competitors.models import Competitor
+from app.metrics.service import load_observations
+from app.opportunities.service import AREAS, IMPACT_ORDER, status_summary
 from app.users.models import User
 
 router = APIRouter(prefix="/projects/{project_id}/opportunities", tags=["Opportunities"])
@@ -41,6 +43,8 @@ def serialize(o: Opportunity) -> dict:
         # Carried across scans: what changed since last scan, when it first appeared, and the proof loop.
         "trend": o.trend, "first_seen_scan_id": o.first_seen_scan_id, "previous_count": o.evidence.get("previous_count"),
         "steps": o.evidence.get("steps") or [], "effort": o.evidence.get("effort"),
+        "why": o.evidence.get("why") or [], "questions": o.evidence.get("questions") or [],
+        "success_metric": o.evidence.get("success_metric"),
         "experiment_id": o.experiment_id, "retest": o.evidence.get("retest"), "locked": False,
     }
 
@@ -50,8 +54,11 @@ def list_opportunities(
     project_id: UUID,
     status: str | None = None,
     scan_id: int | None = None,
+    with_status: bool = False,
     current_user: User = Depends(get_current_user),
 ):
+    """The scan's opportunities. With `with_status`, returns {"status": ..., "items": [...]} so the page can lead
+    with where the project stands; the plain list stays for older callers."""
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
         if scan_id is None:
@@ -59,17 +66,23 @@ def list_opportunities(
                 select(MetricSnapshot.scan_id).where(MetricSnapshot.project_id == project.id).order_by(MetricSnapshot.scan_id.desc())
             )
         if scan_id is None:
-            return []
+            return {"status": None, "items": []} if with_status else []
         query = select(Opportunity).where(Opportunity.project_id == project.id, Opportunity.scan_id == scan_id)
         if status:
             query = query.where(Opportunity.status == status)
         rows = sorted(session.scalars(query).all(), key=lambda o: (IMPACT_ORDER.get(o.impact, 9), -o.confidence))
         if entitlements(session, project.workspace_id).pro:
-            return [serialize(o) for o in rows]
-        # The free trial sees its top fixes in full; the rest show what kind of gap they are, not the fix.
-        live = [o for o in rows if o.trend != "resolved"]
-        visible = {o.id for o in live[:FREE_VISIBLE]}
-        return [serialize(o) if o.id in visible or o.trend == "resolved" else locked(o) for o in rows]
+            items = [serialize(o) for o in rows]
+        else:
+            # The free trial sees its top fixes in full; the rest show what kind of gap they are, not the fix.
+            live = [o for o in rows if o.trend != "resolved"]
+            visible = {o.id for o in live[:FREE_VISIBLE]}
+            items = [serialize(o) if o.id in visible or o.trend == "resolved" else locked(o) for o in rows]
+        if not with_status:
+            return items
+        names = {c.id: c.name for c in session.scalars(select(Competitor).where(Competitor.project_id == project.id))}
+        status = status_summary(load_observations(session, scan_id), project.brand_name.strip(), names)
+        return {"status": status, "items": items}
 
 
 @router.get("/{opportunity_id}")
@@ -108,7 +121,8 @@ def locked(o: Opportunity) -> dict:
     """An opportunity past the free trial's top 3: its kind and size, without the evidence or the fix."""
     return {
         **serialize(o), "title": "Upgrade to see this fix", "description": "", "recommended_action": "",
-        "evidence": {}, "related_prompts": [], "steps": [], "expected_objective": None, "retest": None, "locked": True,
+        "evidence": {}, "related_prompts": [], "steps": [], "why": [], "questions": [], "success_metric": None,
+        "expected_objective": None, "retest": None, "locked": True,
     }
 
 
