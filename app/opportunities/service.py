@@ -511,6 +511,9 @@ def generate_and_store(
         o.fingerprint: o
         for o in session.scalars(select(Opportunity).where(Opportunity.scan_id == previous_scan, Opportunity.trend != "resolved"))
     } if previous_scan else {}
+    # Question-gap fingerprints used to be "{type}:{category}". Rows stored that way cannot be matched to
+    # today's "question_gap:{category}", so re-baseline instead of reporting them as fixed.
+    previous = {fp: o for fp, o in previous.items() if fp.split(":", 1)[0].upper() not in QUESTION_GAPS}
 
     rows = []
     for item in detect(observations, brand, competitors, audit):

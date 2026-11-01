@@ -59,6 +59,29 @@ def test_a_gap_that_disappears_is_reported_as_resolved(client):
     assert [o["title"] for o in resolved] == [first[0]["title"]] and resolved[0]["status"] == "completed"
 
 
+def test_old_format_fingerprints_rebaseline_instead_of_reporting_everything_fixed(client):
+    from sqlalchemy import select, update
+
+    from app.opportunities.models import Opportunity
+    from app.opportunities.service import QUESTION_GAPS
+
+    headers = signup(client, "oldfp")
+    project_id = make_project(client, headers)
+    client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
+    first_scan = scan_and_wait(client, headers, project_id)
+    with SessionLocal() as s:  # rewrite the first scan's question gaps to the pre-grouping "{type}:{category}" format
+        rows = s.scalars(select(Opportunity).where(Opportunity.scan_id == first_scan["id"], Opportunity.type.in_(QUESTION_GAPS))).all()
+        assert rows
+        for r in rows:
+            s.execute(update(Opportunity).where(Opportunity.id == r.id).values(fingerprint=f"{r.type.lower()}:{r.evidence.get('category') or ''}".lower()))
+        s.commit()
+
+    scan_and_wait(client, headers, project_id)
+    after = opportunities(client, headers, project_id)
+    assert after and not [o for o in after if o["trend"] == "resolved" or o["status"] == "completed"]
+    assert all(o["scan_id"] != first_scan["id"] for o in after)
+
+
 def test_retest_asks_only_that_opportunitys_prompts_and_reports_before_and_after(client):
     headers = signup(client, "retest")
     project_id = make_project(client, headers)
