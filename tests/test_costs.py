@@ -2,7 +2,7 @@ import uuid
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.common import llm
 from app.common.config import settings
@@ -147,3 +147,27 @@ def test_threaded_scan_rows_carry_scan_attribution(client, ai_on, monkeypatch):
     assert {r.purpose for r in rows} == {"scan_answer", "answer_analysis"}
     assert {r.engine for r in rows} == {"one", "two"}
     assert all(str(r.project_id) == project_id and r.workspace_id == workspace_id for r in rows)
+
+
+def test_free_check_calls_are_recorded_as_free_check(ai_on, monkeypatch):
+    from app.freecheck.models import FreeCheck
+    from app.freecheck.service import run_free_check
+
+    def post(url, json=None, headers=None, timeout=None):
+        content = '{"brands": []}' if json.get("response_format") else "1. Halden is great."
+        return FakeResponse(200, ok_body(content=content))
+
+    monkeypatch.setattr(llm.httpx, "post", post)
+    monkeypatch.setattr(settings, "free_check_prompts", 1)
+    marker = uuid.uuid4().hex[:8]
+    with SessionLocal() as session:
+        check = FreeCheck(brand_name=f"Halden{marker}", website=f"halden{marker}.co", category="CRM software", country="US", client="t", status="queued")
+        session.add(check)
+        session.commit()
+        check_id = check.id
+        before = session.scalar(select(func.max(AICall.id))) or 0
+    run_free_check(check_id)
+    with SessionLocal() as session:
+        assert session.get(FreeCheck, check_id).status == "done"
+        rows = list(session.scalars(select(AICall).where(AICall.id > before)))
+    assert rows and {r.purpose for r in rows} == {"free_check"}

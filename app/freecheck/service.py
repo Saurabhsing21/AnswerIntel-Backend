@@ -64,7 +64,9 @@ def _check(brand: str, website: str, category: str, country: str) -> dict:
 
     jobs = [(p, e) for p in prompts for e in engines]
     with ThreadPoolExecutor(max_workers=4) as pool:
-        done = list(pool.map(lambda job: contextvars.copy_context().run(_safe, ask, *job), jobs))
+        # Copy the context here, on the submitting thread: a copy made inside a worker would be the worker's empty one.
+        futures = [pool.submit(contextvars.copy_context().run, _safe, ask, *job) for job in jobs]
+        done = [f.result() for f in futures]
 
     rows: dict[str, list[dict]] = {p: [] for p in prompts}
     sources: Counter = Counter()
