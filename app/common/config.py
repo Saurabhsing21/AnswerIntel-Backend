@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     provider_timeout_seconds: float = 90
     provider_max_retries: int = 2
     scan_concurrency: int = 4
+    # Connection pool, sized for 4 concurrent scans in one Celery process, each holding a session plus
+    # scan_concurrency workers writing the cost ledger: 4 * (1 + 4) = 20 steady, 10 overflow headroom.
+    db_pool_size: int = 20
+    db_max_overflow: int = 10
+    db_pool_timeout_seconds: float = 10  # short, so a busy pool cannot stall a scan for the 30s default
     # Seconds to wait before each retry of a failed provider call (PRD 59). Three delays = three retries.
     provider_retry_delays: str = "30,120,600"
     provider_max_parallel_per_engine: int = 2
