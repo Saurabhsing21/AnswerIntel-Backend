@@ -1,10 +1,12 @@
 """Run a free check: template prompts (no LLM cost), two engines, the normal answer analysis."""
 
+import contextvars
 import logging
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
+from app.costs.service import cost_scope
 from app.analysis.base import AnalysisContext
 from app.analysis.service import ResponseAnalysisService
 from app.common.config import settings
@@ -34,7 +36,8 @@ def run_free_check(check_id: UUID) -> None:
         session.commit()
         brand, website, category, country = check.brand_name, check.website, check.category, check.country
     try:
-        result = _check(brand, website, category, country)
+        with cost_scope(purpose="free_check"):
+            result = _check(brand, website, category, country)
         status = "done"
     except Exception:
         log.exception("Free check %s failed", check_id)
@@ -61,7 +64,7 @@ def _check(brand: str, website: str, category: str, country: str) -> dict:
 
     jobs = [(p, e) for p in prompts for e in engines]
     with ThreadPoolExecutor(max_workers=4) as pool:
-        done = list(pool.map(lambda job: _safe(ask, *job), jobs))
+        done = list(pool.map(lambda job: contextvars.copy_context().run(_safe, ask, *job), jobs))
 
     rows: dict[str, list[dict]] = {p: [] for p in prompts}
     sources: Counter = Counter()

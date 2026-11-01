@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import contextvars
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import replace
@@ -16,6 +17,7 @@ from app.providers.models import engines_for_prompt
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.llm import PermanentLLMError
+from app.costs.service import cost_scope
 from app.common.database import engine as db_engine
 from app.competitors.models import Competitor
 from app.metrics.alerts import alert_on_drop, alert_on_overtake, notify_first_scan
@@ -85,6 +87,14 @@ class ScanExecutionService:
     def _run(self, scan_id: int) -> None:
         with SessionLocal() as session:
             scan = session.get(Scan, scan_id)
+            project = session.get(Project, scan.project_id) if scan else None
+            scope = cost_scope(workspace_id=project.workspace_id, project_id=project.id, scan_id=scan_id) if project else cost_scope()
+        with scope:
+            self._execute(scan_id)
+
+    def _execute(self, scan_id: int) -> None:
+        with SessionLocal() as session:
+            scan = session.get(Scan, scan_id)
             if not scan or scan.status not in ("queued", "running"):
                 return  # idempotent: a finished scan is never executed again; a "running" one resumes
             project = session.get(Project, scan.project_id)
@@ -140,12 +150,14 @@ class ScanExecutionService:
             # Workers get plain text, never ORM objects: the main thread commits while they run, and touching an
             # expired object from another thread would hit the session mid-commit.
             def work(prompt_text: str, engine):
-                response = ask(prompt_text, engine)
-                result = self.analysis_service.analyze(
-                    response.text,
-                    replace(analysis_context, prompt=prompt_text),
-                    citations=response.citations,
-                )
+                with cost_scope(purpose="scan_answer", engine=engine.key):
+                    response = ask(prompt_text, engine)
+                with cost_scope(purpose="answer_analysis", engine=engine.key):
+                    result = self.analysis_service.analyze(
+                        response.text,
+                        replace(analysis_context, prompt=prompt_text),
+                        citations=response.citations,
+                    )
                 return response, result
 
             last_error: str | None = None
@@ -154,7 +166,11 @@ class ScanExecutionService:
                 for p in prompts for e in engines_for_prompt(engines, p.engines) if (p.id, e.key) not in done
             ]
             with ThreadPoolExecutor(max_workers=max(1, settings.scan_concurrency)) as pool:
-                futures = {pool.submit(work, text, engine): (pid, engine) for pid, text, _, _, engine in jobs}
+                # Pool threads do not inherit contextvars: run each job in a copy of the scan's cost scope.
+                futures = {
+                    pool.submit(contextvars.copy_context().run, work, text, engine): (pid, engine)
+                    for pid, text, _, _, engine in jobs
+                }
                 for future in as_completed(futures):
                     prompt_id, engine = futures[future]
                     try:

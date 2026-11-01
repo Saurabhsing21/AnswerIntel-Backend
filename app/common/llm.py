@@ -5,6 +5,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from app.common.config import settings
+from app.costs.service import record_call
 
 
 class LLMError(Exception):
@@ -13,6 +14,28 @@ class LLMError(Exception):
 
 class PermanentLLMError(LLMError):
     """The provider refused the request itself (bad key, unverified account, invalid input): retrying cannot help."""
+
+
+def _record(model: str, response: httpx.Response, web_search: bool, started: float) -> None:
+    """Ledger row for one attempt that got an HTTP response; the cost is whatever OpenRouter says it charged."""
+    ok = response.status_code < 400
+    data: dict = {}
+    try:
+        parsed = response.json()
+        data = parsed if isinstance(parsed, dict) else {}
+    except ValueError:
+        pass
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else None
+    record_call(
+        provider="openrouter",
+        model=model,
+        usage=usage,
+        generation_id=data.get("id"),
+        cost_usd=(usage or {}).get("cost"),
+        web_searches=1 if (web_search and ok) else 0,
+        status="ok" if ok else "failed",
+        latency_ms=int((time.monotonic() - started) * 1000),
+    )
 
 
 def chat(
@@ -27,7 +50,7 @@ def chat(
     if not settings.ai_enabled:
         raise LLMError("OPENROUTER_API_KEY is not set")
 
-    payload: dict = {"model": model, "messages": messages}
+    payload: dict = {"model": model, "messages": messages, "usage": {"include": True}}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
     if web_search:  # the model's own search (what the consumer app uses), billed per request by OpenRouter
@@ -40,6 +63,7 @@ def chat(
     }
     last_error: Exception | None = None
     for attempt in range(settings.provider_max_retries + 1):
+        started = time.monotonic()
         try:
             response = httpx.post(
                 f"{settings.openrouter_base_url}/chat/completions",
@@ -47,6 +71,7 @@ def chat(
                 headers=headers,
                 timeout=timeout or settings.provider_timeout_seconds,
             )
+            _record(model, response, web_search, started)
             if response.status_code in (429, 500, 502, 503, 504):
                 raise LLMError(f"Provider returned {response.status_code}")
             if response.status_code >= 400:
@@ -58,6 +83,11 @@ def chat(
             return data
         except (httpx.HTTPError, LLMError, ValueError) as exc:
             last_error = exc
+            if isinstance(exc, httpx.HTTPError):  # no response came back, so nothing was billed
+                record_call(
+                    provider="openrouter", model=model, usage=None, generation_id=None, cost_usd=0,
+                    web_searches=0, status="failed", latency_ms=int((time.monotonic() - started) * 1000),
+                )
             retryable = not isinstance(exc, PermanentLLMError)
             if attempt < settings.provider_max_retries and retryable:
                 time.sleep(2 * (attempt + 1))

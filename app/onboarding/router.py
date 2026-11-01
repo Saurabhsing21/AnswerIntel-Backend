@@ -12,6 +12,7 @@ from app.auth.dependencies import get_current_user
 from app.common.config import settings
 from app.common.llm import LLMError, chat
 from app.common.safe_http import safe_get
+from app.costs.service import cost_scope
 from app.competitors.suggest import suggest_competitors
 from app.users.models import User
 
@@ -30,7 +31,8 @@ class Brand(BaseModel):
 
 @router.post("/competitors")
 def competitors(payload: Brand, current_user: User = Depends(get_current_user)):
-    return suggest_competitors(payload.brand_name, payload.website, payload.category, payload.country, payload.description, set())
+    with cost_scope(purpose="competitor_suggestion", user_id=current_user.id):
+        return suggest_competitors(payload.brand_name, payload.website, payload.category, payload.country, payload.description, set())
 
 
 def _meta(page: str, *names: str) -> str | None:
@@ -42,15 +44,16 @@ def _meta(page: str, *names: str) -> str | None:
     return None
 
 
-def _categories(name: str | None, description: str | None) -> list[str]:
+def _categories(name: str | None, description: str | None, user_id: int | None = None) -> list[str]:
     """Three short category phrases a buyer would search for. Needs an AI key; empty otherwise."""
     if not settings.ai_enabled or not (name or description):
         return []
     try:
-        data = chat(settings.analysis_model, [
-            {"role": "system", "content": 'Name the product category of this company the way a buyer searches for it, e.g. "CRM software for startups". Return JSON {"categories": [3 short phrases, best first]}.'},
-            {"role": "user", "content": f"Name: {name}\nAbout: {description}"},
-        ], json_mode=True)
+        with cost_scope(purpose="brand_profile", user_id=user_id):
+            data = chat(settings.analysis_model, [
+                {"role": "system", "content": 'Name the product category of this company the way a buyer searches for it, e.g. "CRM software for startups". Return JSON {"categories": [3 short phrases, best first]}.'},
+                {"role": "user", "content": f"Name: {name}\nAbout: {description}"},
+            ], json_mode=True)
         found = json.loads(data["choices"][0]["message"].get("content") or "{}").get("categories", [])
         return [str(c).strip()[:80] for c in found if str(c).strip()][:3]
     except (LLMError, ValueError, KeyError, IndexError):
@@ -69,4 +72,4 @@ def site(url: str, current_user: User = Depends(get_current_user)):
     title = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
     name = _meta(page, "og:site_name") or (re.split(r"\s[|\-–—:]\s", html.unescape(title.group(1)).strip())[0] if title else None)
     description = _meta(page, "og:description", "description")
-    return {"name": name[:100] if name else None, "description": description[:300] if description else None, "categories": _categories(name, description)}
+    return {"name": name[:100] if name else None, "description": description[:300] if description else None, "categories": _categories(name, description, current_user.id)}

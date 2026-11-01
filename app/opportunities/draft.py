@@ -4,6 +4,7 @@ import logging
 
 from app.common.config import settings
 from app.common.llm import LLMError, chat
+from app.costs.service import cost_scope
 from app.opportunities.models import Opportunity
 from app.projects.models import Project
 
@@ -25,7 +26,8 @@ def draft_for(project: Project, opportunity: Opportunity) -> dict:
     )
     if settings.ai_enabled:
         try:
-            data = chat(settings.prompt_model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
+            with cost_scope(purpose="draft", workspace_id=project.workspace_id, project_id=project.id, user_id=project.user_id):
+                data = chat(settings.prompt_model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}])
             text = (data["choices"][0]["message"].get("content") or "").strip()
             if text:
                 return {"markdown": text, "generated": True}

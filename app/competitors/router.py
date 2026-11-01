@@ -7,6 +7,7 @@ from app.auth.dependencies import get_current_user
 from app.common.access import project_access
 from app.common.database import SessionLocal
 from app.competitors.models import Competitor
+from app.costs.service import cost_scope
 from sqlalchemy import func
 
 from app.billing.plans import entitlements, require_room
@@ -194,4 +195,5 @@ def competitor_suggestions(project_id: UUID, current_user: User = Depends(get_cu
         tracked = session.scalars(select(Competitor).where(Competitor.project_id == project.id)).all()
         exclude = {c.name.lower() for c in tracked} | {_domain(c.website) for c in tracked if c.website}
         args = (project.brand_name, project.website, project.category, project.country, project.description, exclude)
-    return suggest_competitors(*args)  # the model call runs after the session is closed
+    with cost_scope(purpose="competitor_suggestion", workspace_id=project.workspace_id, project_id=project.id, user_id=current_user.id):
+        return suggest_competitors(*args)  # the model call runs after the session is closed

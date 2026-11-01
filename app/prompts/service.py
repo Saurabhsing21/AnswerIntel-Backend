@@ -8,6 +8,7 @@ from app.billing.service import active_prompts
 from app.common.config import settings
 from app.common.llm import LLMError
 from app.competitors.models import Competitor
+from app.costs.service import cost_scope
 from app.projects.models import Project
 from app.prompts.generator import (
     InstructedTemplateGenerator,
@@ -59,7 +60,8 @@ class PromptDiscoveryService:
         candidates: list[dict] = []
         if not sample:
             try:
-                candidates = generate_prompts(generator=LLMPromptGenerator(count=count), data=data)
+                with cost_scope(purpose="question_writing", workspace_id=project.workspace_id, project_id=project.id, user_id=project.user_id):
+                    candidates = generate_prompts(generator=LLMPromptGenerator(count=count), data=data)
             except LLMError as exc:
                 log.warning("Instructed prompt generation failed: %s", exc)
                 raise
@@ -102,7 +104,8 @@ class PromptDiscoveryService:
 
     def generate_for_project(self, session: Session, project: Project) -> list[Prompt]:
         """Adds newly discovered prompts; existing ones (and user edits) are kept."""
-        candidates, source = self._generate(build_input(session, project))
+        with cost_scope(purpose="question_writing", workspace_id=project.workspace_id, project_id=project.id, user_id=project.user_id):
+            candidates, source = self._generate(build_input(session, project))
         existing = {
             text.strip().lower()
             for text in session.scalars(select(Prompt.text).where(Prompt.project_id == project.id))
