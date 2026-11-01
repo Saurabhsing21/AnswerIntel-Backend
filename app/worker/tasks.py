@@ -17,9 +17,9 @@ def run_scan_task(scan_id: int, send_report: bool = False) -> None:
 
 
 @celery_app.task(name="reports.render_pdf")
-def render_report_pdf_task(report_id: int) -> None:
+def render_report_pdf_task(report_id: int, email_owner: bool = False) -> None:
     """Runs on the `reports` queue, so a burst of PDFs never waits behind long scans (or the reverse)."""
-    build_report_pdf(report_id)
+    build_report_pdf(report_id, email_owner)
 
 
 @celery_app.task(name="schedules.dispatch")

@@ -31,8 +31,9 @@ def render_pdf_bytes(document: dict) -> bytes:
     return done.stdout
 
 
-def build_report_pdf(report_id: int) -> None:
-    """Draws and stores one report's PDF. Safe to repeat: a redelivered job redraws the same file."""
+def build_report_pdf(report_id: int, email_owner: bool = False) -> None:
+    """Draws and stores one report's PDF. Safe to repeat: a redelivered job redraws the same file.
+    `email_owner`: then emails the report (with the PDF if it rendered); emailed_at keeps that to once."""
     with SessionLocal() as session:
         report = session.get(Report, report_id)
         if not report:
@@ -55,9 +56,13 @@ def build_report_pdf(report_id: int) -> None:
             row.status, row.error = "ready", None
             row.render_ms = round((time.monotonic() - started) * 1000)
         session.commit()
+    if email_owner:
+        from app.reports.delivery import email_report_to_owner  # delivery queues PDFs, so it imports this module
+
+        email_report_to_owner(report_id)
 
 
-def queue_report_pdf(report_id: int, background_tasks: BackgroundTasks | None = None) -> None:
+def queue_report_pdf(report_id: int, background_tasks: BackgroundTasks | None = None, email_owner: bool = False) -> None:
     """Marks the PDF pending and hands it to the report worker. Without Redis it runs after the response
     (`background_tasks`) or, when already off the request path, right away."""
     with SessionLocal() as session:
@@ -69,17 +74,21 @@ def queue_report_pdf(report_id: int, background_tasks: BackgroundTasks | None = 
         session.commit()
     if not settings.redis_url:
         if background_tasks is not None:
-            background_tasks.add_task(build_report_pdf, report_id)
+            background_tasks.add_task(build_report_pdf, report_id, email_owner)
         else:
-            build_report_pdf(report_id)
+            build_report_pdf(report_id, email_owner)
         return
     from app.worker.tasks import render_report_pdf_task
 
     try:
-        render_report_pdf_task.delay(report_id)
+        render_report_pdf_task.delay(report_id, email_owner)
     except Exception:
         log.exception("Could not queue the PDF for report %s", report_id)
         with SessionLocal() as session:
             row = session.get(ReportPdf, report_id)
             row.status, row.error = "failed", "The job queue is unavailable."
             session.commit()
+        if email_owner:
+            from app.reports.delivery import email_report_to_owner
+
+            email_report_to_owner(report_id)  # no worker will run: send the link-only email now

@@ -32,8 +32,18 @@ def deliver_scan_report(scan_id: int, report_type: str) -> None:
             return
         report = create_report(session, project, report_type)
         session.commit()
-        queue_report_pdf(report.id)
-        owner = session.get(User, project.user_id)
+        report_id = report.id
+    # The owner is emailed by the PDF job once the PDF exists (or failed), so the attachment is not raced.
+    queue_report_pdf(report_id, email_owner=True)
+
+
+def email_report_to_owner(report_id: int) -> None:
+    """Emails the report to the project owner, PDF attached when ready, link only otherwise. Once per report."""
+    with SessionLocal() as session:
+        report = session.get(Report, report_id)
+        if not report or report.emailed_at:
+            return
+        owner = session.get(User, session.get(Project, report.project_id).user_id)
         try:
             subject, html, attachments = build_report_email(session, report)
             send_report_email(owner.email, subject, html, attachments or None)

@@ -64,17 +64,42 @@ def test_the_free_trial_gets_the_ready_email_and_no_report(client, outbox, monke
     assert [m["subject"] for m in outbox if "is ready" in m["subject"]] == ["Your first scan of Halden is ready"]
 
 
-def test_the_report_email_attaches_the_pdf_or_links_when_it_is_not_ready(client, monkeypatch):
+def _queued(client, monkeypatch, prefix):
+    """A scan whose PDF job is held back, as with Redis: the report exists, nothing is emailed yet."""
     sent = report_inbox(monkeypatch)
-    monkeypatch.setattr("app.reports.delivery.queue_report_pdf", lambda report_id: None)  # the worker has not finished
-    headers, project_id = ready(client, "autorep4")
+    jobs = []
+    monkeypatch.setattr("app.reports.delivery.queue_report_pdf", lambda report_id, email_owner=False: jobs.append((report_id, email_owner)))
+    headers, project_id = ready(client, prefix)
     client.post(f"{API}/projects/{project_id}/scans", headers=headers)
-    assert len(sent) == 1 and not sent[0][2]
-    report = client.get(f"{API}/projects/{project_id}/reports", headers=headers).json()[0]
-    from app.reports.email_render import build_report_email
+    assert not sent and len(jobs) == 1 and jobs[0][1] is True
+    return sent, jobs[0][0], project_id
+
+
+def test_the_queued_pdf_job_emails_once_with_the_pdf_attached(client, monkeypatch):
+    from app.reports.pdf_jobs import build_report_pdf
+
+    sent, report_id, project_id = _queued(client, monkeypatch, "autorep4")
+    build_report_pdf(report_id, email_owner=True)
+    build_report_pdf(report_id, email_owner=True)  # a redelivered job must not email again
+    assert len(sent) == 1 and sent[0][2][0][1].startswith(b"%PDF")
     with SessionLocal() as session:
-        _, html, _ = build_report_email(session, session.get(Report, report["id"]))
-    assert f"/projects/{project_id}/reports/{report['id']}" in html and "attached as a PDF" not in html
+        assert session.get(Report, report_id).emailed_at
+
+
+def test_a_failed_render_still_emails_the_link_without_the_pdf(client, monkeypatch):
+    from app.reports.email_render import build_report_email
+    from app.reports.pdf_jobs import build_report_pdf
+
+    def boom(document):
+        raise RuntimeError("renderer down")
+
+    sent, report_id, project_id = _queued(client, monkeypatch, "autorep6")
+    monkeypatch.setattr("app.reports.pdf_jobs.render_pdf_bytes", boom)
+    build_report_pdf(report_id, email_owner=True)
+    assert len(sent) == 1 and not sent[0][2]
+    with SessionLocal() as session:
+        _, html, _ = build_report_email(session, session.get(Report, report_id))
+    assert f"/projects/{project_id}/reports/{report_id}" in html and "attached as a PDF" not in html
     assert "estimate" in html and "DO THIS FIRST" in html and "Key findings" in html
 
 
