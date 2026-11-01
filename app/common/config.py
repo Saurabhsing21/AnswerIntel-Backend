@@ -1,4 +1,4 @@
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -8,7 +8,10 @@ class Settings(BaseSettings):
     waitlist_only: bool = False
     sentry_dsn: str = ""  # empty = error monitoring off
 
+    # Neon writes plain postgresql:// URLs to the repo-root .env.local; the pooled one serves the app, the direct
+    # (unpooled) one runs migrations.
     database_url: str
+    database_url_unpooled: str = ""
 
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
@@ -74,9 +77,14 @@ class Settings(BaseSettings):
     app_base_url: str = "http://localhost:3000"  # where Stripe sends people back after Checkout and the Portal
 
     model_config = {
-        "env_file": ".env",
+        "env_file": (".env", "../.env.local"),  # later files win: Neon's .env.local overrides backend/.env
         "extra": "ignore",
     }
+
+    @field_validator("database_url", "database_url_unpooled")
+    @classmethod
+    def use_psycopg_driver(cls, url: str) -> str:
+        return "postgresql+psycopg://" + url.removeprefix("postgresql://") if url.startswith("postgresql://") else url
 
     @model_validator(mode="after")
     def reject_weak_production_secrets(self):

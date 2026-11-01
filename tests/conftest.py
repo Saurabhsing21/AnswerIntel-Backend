@@ -1,4 +1,10 @@
+import os
 import uuid
+
+# Tests write throwaway rows: never let them reach the real (Neon) database from .env.local.
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://postgres@localhost:5434/seenlens_test")
+os.environ["DATABASE_URL_UNPOOLED"] = ""
+assert "neon.tech" not in os.environ["DATABASE_URL"], "TEST_DATABASE_URL must not point at Neon"
 
 import pytest
 from fastapi.testclient import TestClient

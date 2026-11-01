@@ -4,9 +4,8 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.common.config import settings
 
 
-engine = create_engine(
-    settings.database_url,
-)
+# pre_ping: Neon suspends idle computes, which drops pooled connections; test each one before use.
+engine = create_engine(settings.database_url, pool_pre_ping=True)
 
 
 SessionLocal = sessionmaker(
