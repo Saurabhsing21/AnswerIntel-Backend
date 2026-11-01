@@ -31,7 +31,7 @@ CATALOG = (
 # Shown in the app but not selectable: no public API to ask them through.
 COMING_SOON = {"copilot": "Microsoft Copilot"}
 # In the catalog but switched off for now (OpenRouter budget); shown as coming soon and skipped by scans.
-PAUSED = {"claude"}
+PAUSED = {"claude", "google"}
 # What a new project scans unless the user picks otherwise: the engines buyers use most, as they answer in their apps.
 DEFAULT_ENGINES = ("chatgpt_search", "perplexity", "gemini", "google")
 

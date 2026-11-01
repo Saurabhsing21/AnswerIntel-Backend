@@ -35,10 +35,12 @@ def test_new_projects_scan_the_default_engines_with_web_search(monkeypatch):
     assert engines == {"chatgpt_search": True, "gemini": True, "perplexity": False}  # Google AI Mode needs DataForSEO
 
 
-def test_google_ai_mode_is_available_when_dataforseo_is_configured(monkeypatch):
+def test_google_ai_mode_is_coming_soon_even_when_dataforseo_is_configured(monkeypatch):
     monkeypatch.setattr(settings, "dataforseo_login", "me@example.com")
     monkeypatch.setattr(settings, "dataforseo_password", "secret")
-    google = [e for e in engines_for_project(["google", "claude"]) if e.key == "google"]
+    assert not [e for e in engines_for_project(["google", "claude"]) if e.key == "google"]
+    monkeypatch.setattr("app.providers.models.PAUSED", {"claude"})  # once un-paused, credentials switch it on
+    google = [e for e in engines_for_project(["google"]) if e.key == "google"]
     assert len(google) == 1 and google[0].model == GOOGLE_AI_MODEL and google[0].display_name == "Google AI Mode"
 
 
