@@ -56,6 +56,7 @@ TECHNICAL_TITLES = {
 DISCOVERY_CATEGORIES = ("CATEGORY", "USE_CASE", "PROBLEM")
 BRANDED_CATEGORIES = ("COMPARISON", "COMPETITOR", "ALTERNATIVE")
 COMPARISON_CATEGORIES = ("COMPARISON", "COMPETITOR")
+QUESTION_GAPS = ("CONTENT_GAP", "COMPETITOR_GAP", "COMPARISON_GAP")
 SWITCH_CATEGORIES = ("ALTERNATIVE", "COMPETITOR")  # "alternatives to {brand}" cannot be won by naming the brand
 
 
@@ -145,7 +146,10 @@ def _why(questions: list[dict], brand: str) -> list[str]:
         why.append(f"The answers relied on {', '.join(d for d, _ in domains.most_common(3))}, where {brand} does not show up.")
     if len(why) < 2:
         winners = Counter(w["name"] for q in questions for w in q["winners"])
-        why.append(f"AI recommended {', '.join(n for n, _ in winners.most_common(3))} instead, without giving a reason.")
+        if winners:
+            why.append(f"AI recommended {', '.join(n for n, _ in winners.most_common(3))} instead, without giving a reason.")
+        else:
+            why.append(f"AI answered without recommending {brand} or any competitor you track, and cited no sources.")
     return why[:4]
 
 
@@ -478,9 +482,12 @@ def weekly_plan(rows: list[Opportunity]) -> list[Opportunity]:
 
 
 def fingerprint(item: dict) -> str:
-    """Identity of a gap across scans: its type plus what it is about (a question category for question gaps)."""
+    """Identity of a gap across scans: what it is about (its type, or for question gaps their category)."""
     ev = item["evidence"]
-    return f"{item['type']}:{ev.get('category') or ''}".lower()
+    # One identity per question category whatever the gap type, so a category moving between content,
+    # competitor and comparison gaps stays the same opportunity instead of looking fixed.
+    kind = "question_gap" if item["type"] in QUESTION_GAPS else item["type"]
+    return f"{kind}:{ev.get('category') or ''}".lower()
 
 
 def _weight(evidence: dict) -> int:

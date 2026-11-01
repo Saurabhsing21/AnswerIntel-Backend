@@ -6,7 +6,8 @@ from app.analysis.llm import AnalysisOutput, BrandVerdict
 from app.analysis.service import ResponseAnalysisService
 from app.metrics.service import Observation
 from app.opportunities import site_audit
-from app.opportunities.service import detect, fingerprint, status_summary
+from app.opportunities import service
+from app.opportunities.service import _why, detect, fingerprint, status_summary
 from tests.conftest import API, make_project, signup
 
 ENGINES = ("chatgpt", "gemini", "perplexity")
@@ -84,7 +85,7 @@ def test_losses_are_grouped_by_question_type_with_every_winner_listed():
         {"name": "Zerodha", "engines": 2, "reason": "highlighted for documentation", "quote": "Zerodha's support portal is well documented."},
     ]
     # Same grouping key across scans, so trends still work.
-    assert {fingerprint(g) for g in gaps} == {"competitor_gap:category", "competitor_gap:use_case"}
+    assert {fingerprint(g) for g in gaps} == {"question_gap:category", "question_gap:use_case"}
 
 
 def test_every_question_gap_explains_why_and_has_tailored_steps_and_a_success_metric():
@@ -185,3 +186,43 @@ def test_list_can_include_the_status_block(client):
     assert status["answers_total"] > 0 and status["headline"]
     for o in body["items"]:
         assert {"why", "questions", "success_metric"} <= set(o)
+
+
+def test_why_without_winners_or_sources_never_shows_an_empty_name():
+    why = _why([{"text": "q", "category": "CATEGORY", "engines_lost": 3, "engines_total": 3, "winners": [], "cited_domains": []}], "Groww")
+    assert len(why) == 2 and all("  " not in w for w in why)
+    assert why[1] == "AI answered without recommending Groww or any competitor you track, and cited no sources."
+
+
+def test_a_category_that_flips_between_gap_types_stays_the_same_opportunity(client):
+    from app.opportunities.models import Opportunity
+    from app.common.database import SessionLocal
+
+    headers = signup(client, "flipgap")
+    project_id = make_project(client, headers)
+    client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
+    questions = [{"text": "best app", "category": "CATEGORY", "engines_lost": 2, "engines_total": 3,
+                  "winners": [{"name": "Upstox", "engines": 2, "reason": None, "quote": None}], "cited_domains": []}]
+
+    def gap(kind):
+        return {"type": kind, "title": kind, "description": "d", "recommended_action": "a", "impact": "medium", "confidence": 0.6,
+                "evidence": {"category": "CATEGORY", "prompts": ["best app"], "questions": questions, "answers_lost": 2}}
+
+    real = service.detect
+    try:
+        service.detect = lambda *a, **k: [gap("COMPETITOR_GAP")]
+        client.post(f"{API}/projects/{project_id}/scans", headers=headers)
+        first = client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json()
+        client.patch(f"{API}/projects/{project_id}/opportunities/{first[0]['id']}", json={"status": "in_progress"}, headers=headers)
+        service.detect = lambda *a, **k: [gap("CONTENT_GAP")]
+        client.post(f"{API}/projects/{project_id}/scans", headers=headers)
+        after = client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json()
+        service.detect = lambda *a, **k: [gap("COMPETITOR_GAP")]
+        client.post(f"{API}/projects/{project_id}/scans", headers=headers)
+        back = client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json()
+    finally:
+        service.detect = real
+    for rows in (after, back):
+        assert len(rows) == 1 and rows[0]["trend"] != "resolved" and rows[0]["trend"] != "new"
+        assert rows[0]["status"] == "in_progress" and rows[0]["first_seen_scan_id"] == first[0]["scan_id"]
+    assert after[0]["type"] == "CONTENT_GAP" and back[0]["type"] == "COMPETITOR_GAP"
