@@ -56,7 +56,7 @@ def _meta(page: str, *names: str) -> str | None:
         m = re.search(rf'<meta[^>]+(?:property|name)=["\']{name}["\'][^>]+content=["\']([^"\']+)', page, re.I) or re.search(
             rf'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']{name}["\']', page, re.I)
         if m:
-            return html.unescape(m.group(1)).strip()
+            return " ".join(html.unescape(m.group(1)).split())  # collapse the line breaks some sites put in meta tags
     return None
 
 
