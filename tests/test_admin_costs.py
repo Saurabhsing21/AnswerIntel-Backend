@@ -82,10 +82,10 @@ def test_numbers_match_inserted_calls(client, admin, calls):
     assert len(after["by_day"]) == 7
     day = lambda body, ago: next(d for d in body["by_day"] if d["date"] == (datetime.now(timezone.utc) - timedelta(days=ago)).date().isoformat())
     assert day(after, 2)["cost"] - day(before, 2)["cost"] == pytest.approx(3)
-    assert after["range_total"] - before["range_total"] == pytest.approx(900003.75)
+    assert after["range_total"] - before["range_total"] == pytest.approx(900003.75, abs=1e-6)
 
     row = next(r for r in after["by_purpose"] if r["key"] == [purpose])
-    assert (row["cost"], row["calls"], row["web_searches"]) == (pytest.approx(900003.75), 3, 2)
+    assert (row["cost"], row["calls"], row["web_searches"]) == (pytest.approx(900003.75, abs=1e-6), 3, 2)
     models = {tuple(r["key"]): r for r in after["by_model"]}
     assert models[("test/other", "chatgpt")]["cost"] >= 0.5
 
@@ -95,7 +95,7 @@ def test_numbers_match_inserted_calls(client, admin, calls):
     assert top["cap"] > 0 and top["percent_of_cap"] > 100
     assert len(after["top_workspaces"]) <= 10
     assert after["this_month"] - before["this_month"] >= 900000.75 - 1e-6
-    assert after["today"] - before["today"] == pytest.approx(900000.75)
+    assert after["today"] - before["today"] == pytest.approx(900000.75, abs=1e-6)
 
 
 def test_recent_scans_and_margin(client, admin):
