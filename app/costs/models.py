@@ -16,6 +16,7 @@ class AICall(Base):
         Index("ix_ai_calls_workspace_created", "workspace_id", "created_at"),
         Index("ix_ai_calls_project_created", "project_id", "created_at"),
         Index("ix_ai_calls_scan", "scan_id"),
+        Index("ix_ai_calls_created_at", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
