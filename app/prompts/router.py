@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 
 from app.auth.dependencies import get_current_user
-from app.billing.plans import entitlements, require_active, require_pro, require_room
+from app.billing.plans import entitlements, require_active, require_pro
 from app.billing.service import active_prompts
 from app.common.config import settings
 from app.common.access import get_owned_project
@@ -12,7 +12,7 @@ from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.prompts.models import Prompt
 from app.prompts.schemas import PromptCreate, PromptsAccept, PromptSuggest, PromptUpdate
-from app.prompts.service import PromptDiscoveryService
+from app.prompts.service import PromptDiscoveryService, pool_full_details, pool_full_message
 from app.users.models import User
 
 router = APIRouter(prefix="/projects/{project_id}/prompts", tags=["Prompts"])
@@ -38,12 +38,30 @@ def _active_count(session, project_id) -> int:
     ) or 0
 
 
-def _require_prompt_room(session, project) -> None:
+def _pool_details(session, project) -> dict | None:
+    """Who holds the workspace's question pool when it is full, else None."""
     ent = entitlements(session, project.workspace_id)
-    message = f"Your plan includes {ent.active_prompts} active prompts across all projects."
-    require_room(ent, "active_prompts", active_prompts(session, project.workspace_id), message, "PROMPT_LIMIT", 409)
+    if active_prompts(session, project.workspace_id) < ent.active_prompts:
+        return None
+    return pool_full_details(session, project.workspace_id, ent.active_prompts)
+
+
+def _require_prompt_room(session, project) -> None:
+    require_active(entitlements(session, project.workspace_id))
+    details = _pool_details(session, project)
+    if details:
+        message = pool_full_message(details, project.id)
+        raise AppError(409, "PROMPT_LIMIT", message, limit="active_prompts", details=details)
     if _active_count(session, project.id) >= settings.max_active_prompts:  # hard ceiling per project
         raise AppError(409, "PROMPT_LIMIT", f"A project can track up to {settings.max_active_prompts} active prompts.")
+
+
+def _pool_full(session, project, created) -> dict | None:
+    """Set when new questions were saved switched off because the plan's pool is full, so the UI can say why."""
+    if all(p.is_active for p in created):
+        return None
+    details = _pool_details(session, project)
+    return details and {**details, "message": pool_full_message(details, project.id)}
 
 
 @router.post("/generate")
@@ -54,7 +72,7 @@ def generate(project_id: UUID, current_user: User = Depends(get_current_user)):
         created = PromptDiscoveryService().generate_for_project(session, project)
         session.commit()
         prompts = session.scalars(select(Prompt).where(Prompt.project_id == project.id).order_by(Prompt.id)).all()
-        return {"created": len(created), "prompts": [serialize(p) for p in prompts]}
+        return {"created": len(created), "prompts": [serialize(p) for p in prompts], "pool_full": _pool_full(session, project, created)}
 
 
 @router.post("/suggest")
@@ -75,7 +93,7 @@ def accept(project_id: UUID, request: PromptsAccept, current_user: User = Depend
         require_pro(entitlements(session, project.workspace_id), "More prompts")
         created = PromptDiscoveryService().add_many(session, project, [p.model_dump() for p in request.prompts])
         session.commit()
-        return {"created": len(created), "inactive": sum(not p.is_active for p in created), "prompts": [serialize(p) for p in created]}
+        return {"created": len(created), "inactive": sum(not p.is_active for p in created), "prompts": [serialize(p) for p in created], "pool_full": _pool_full(session, project, created)}
 
 
 @router.get("")

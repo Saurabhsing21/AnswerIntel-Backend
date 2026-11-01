@@ -397,8 +397,35 @@ def test_prompt_pool_is_shared_by_every_project(client, fake_stripe):
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     refused = client.post(f"{API}/projects/{second}/prompts", json=prompt, headers=headers)
     assert refused.status_code == 409 and refused.json()["error"]["limit"] == "active_prompts"
+    error = refused.json()["error"]  # says which project holds the pool, so the user knows where to turn questions off
+    assert error["details"] == {"holders": [{"project_id": first, "brand": "Halden", "active": 30}], "limit": 30}
+    assert error["message"] == "Halden is using all 30 of your plan's questions. Turn some off there, or upgrade."
     generated = client.post(f"{API}/projects/{second}/prompts/generate", headers=headers).json()
     assert generated["created"] > 0 and not any(p["is_active"] for p in generated["prompts"])  # kept for review
+    assert generated["pool_full"]["holders"] == error["details"]["holders"] and generated["pool_full"]["limit"] == 30
+    assert "Halden is using all 30" in generated["pool_full"]["message"]
+
+    toggled = client.patch(f"{API}/projects/{second}/prompts/{generated['prompts'][0]['id']}", json={"is_active": True}, headers=headers)
+    assert toggled.status_code == 409 and toggled.json()["error"]["details"]["holders"][0]["project_id"] == first
+
+
+def test_pool_error_lists_every_project_holding_it(client, fake_stripe):
+    headers = signup(client, "poolmany")
+    workspace_id = workspace_of(client, headers)
+    first = make_project(client, headers)
+    subscribe(client, fake_stripe, workspace_id)
+    second = client.post(f"{API}/projects", json={**PROJECT, "brand_name": "Bachatt"}, headers=headers).json()["id"]
+    with SessionLocal() as session:
+        for project, count in ((first, 20), (second, 10)):
+            session.add_all([Prompt(project_id=uuid.UUID(project), text=f"{project} {i}", category="CATEGORY",
+                                    intent="DISCOVERY", source="user") for i in range(count)])
+        session.commit()
+    prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
+    refused = client.post(f"{API}/projects/{second}/prompts", json=prompt, headers=headers).json()["error"]
+    assert [(h["brand"], h["active"]) for h in refused["details"]["holders"]] == [("Halden", 20), ("Bachatt", 10)]
+    assert refused["message"] == "Your projects are using all 30 of your plan's questions: Halden (20), Bachatt (10). Turn some off, or upgrade."
+    accepted = client.post(f"{API}/projects/{second}/prompts/accept", json={"prompts": [{**prompt, "importance": 0.5}]}, headers=headers).json()
+    assert accepted["inactive"] == 1 and len(accepted["pool_full"]["holders"]) == 2
 
 
 def test_growth_checkout_and_limits(client, fake_stripe):

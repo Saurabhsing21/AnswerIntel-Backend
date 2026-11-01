@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.billing.plans import entitlements
-from app.billing.service import active_prompts
+from app.billing.service import active_prompts, pool_holders
 from app.common.config import settings
 from app.common.errors import ai_unavailable
 from app.common.llm import LLMError
@@ -31,6 +31,21 @@ def build_input(session: Session, project: Project) -> PromptInput:
         description=project.description,
         competitors=[competitor.name.strip() for competitor in competitors],
     )
+
+
+def pool_full_details(session: Session, workspace_id, limit: int) -> dict:
+    """Who holds the plan's shared question pool, for the error and notice shown when it is full."""
+    return {"holders": pool_holders(session, workspace_id), "limit": limit}
+
+
+def pool_full_message(details: dict, current_project_id=None) -> str:
+    holders, limit = details["holders"], details["limit"]
+    if len(holders) == 1:
+        h = holders[0]
+        where = "Turn some off" if h["project_id"] == str(current_project_id) else "Turn some off there"
+        return f"{h['brand']} is using all {limit} of your plan's questions. {where}, or upgrade."
+    names = ", ".join(f"{h['brand']} ({h['active']})" for h in holders)
+    return f"Your projects are using all {limit} of your plan's questions: {names}. Turn some off, or upgrade."
 
 
 class PromptDiscoveryService:

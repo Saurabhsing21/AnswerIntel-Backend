@@ -6,11 +6,12 @@ from fastapi.responses import JSONResponse
 class AppError(Exception):
     """Domain error rendered as {"error": {"code", "message"}} (PRD section 85)."""
 
-    def __init__(self, status_code: int, code: str, message: str, limit: str | None = None):
+    def __init__(self, status_code: int, code: str, message: str, limit: str | None = None, details: dict | None = None):
         self.status_code = status_code
         self.code = code
         self.message = message
         self.limit = limit  # which plan limit was hit, so the UI can offer an upgrade
+        self.details = details  # structured facts the UI renders itself, e.g. which projects hold the question pool
 
 
 def ai_unavailable() -> AppError:
@@ -18,11 +19,13 @@ def ai_unavailable() -> AppError:
     return AppError(503, "AI_UNAVAILABLE", "We couldn't reach the AI service. Try again in a minute.")
 
 
-def _body(code: str, message: str, limit: str | None = None) -> dict:
+def _body(code: str, message: str, limit: str | None = None, details: dict | None = None) -> dict:
     # "detail" kept for backwards compatibility with existing clients and tests.
     error = {"code": code, "message": message}
     if limit:
         error["limit"] = limit
+    if details:
+        error["details"] = details
     return {"error": error, "detail": message}
 
 
@@ -39,7 +42,7 @@ _HTTP_CODES = {
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def app_error(_: Request, exc: AppError):
-        return JSONResponse(status_code=exc.status_code, content=_body(exc.code, exc.message, exc.limit))
+        return JSONResponse(status_code=exc.status_code, content=_body(exc.code, exc.message, exc.limit, exc.details))
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, exc: HTTPException):

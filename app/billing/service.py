@@ -59,6 +59,18 @@ def active_prompts(session: Session, workspace_id: UUID) -> int:
     ) or 0
 
 
+def pool_holders(session: Session, workspace_id: UUID) -> list[dict]:
+    """Projects holding the question pool, biggest first: who to turn questions off in."""
+    rows = session.execute(
+        select(Project.id, Project.brand_name, func.count(Prompt.id))
+        .join(Prompt, Prompt.project_id == Project.id)
+        .where(Project.workspace_id == workspace_id, Prompt.is_active)
+        .group_by(Project.id, Project.brand_name)
+        .order_by(func.count(Prompt.id).desc(), Project.brand_name)
+    ).all()
+    return [{"project_id": str(pid), "brand": brand, "active": n} for pid, brand, n in rows]
+
+
 def project_count(session: Session, workspace_id: UUID) -> int:
     return session.scalar(select(func.count()).select_from(Project).where(Project.workspace_id == workspace_id)) or 0
 
