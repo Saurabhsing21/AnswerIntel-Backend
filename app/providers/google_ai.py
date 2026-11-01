@@ -50,10 +50,10 @@ def ask_google_ai(prompt: str, context: ProviderContext | None = None) -> AIResp
             timeout=settings.provider_timeout_seconds,
         )
     except httpx.HTTPError as exc:
-        _record(0, False, started)  # no response came back, so nothing was billed
+        _record(None, False, started)  # no response came back, so nothing was billed
         raise LLMError(f"DataForSEO unreachable: {exc.__class__.__name__}") from exc
     if response.status_code >= 400:
-        _record(0, False, started)
+        _record(None, False, started)
         error = LLMError if response.status_code == 429 or response.status_code >= 500 else PermanentLLMError
         raise error(f"DataForSEO returned {response.status_code}")
     data = response.json()

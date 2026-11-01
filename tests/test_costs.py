@@ -220,4 +220,5 @@ def test_google_ai_failed_request_records_failed_zero_cost(monkeypatch):
     with SessionLocal() as session:
         rows = list(session.scalars(select(AICall).where(AICall.id > before)))
     assert len(rows) == 1
-    assert (rows[0].provider, rows[0].status, rows[0].web_searches, float(rows[0].cost_usd)) == ("dataforseo", "failed", 0, 0.0)
+    assert (rows[0].provider, rows[0].status, rows[0].web_searches, float(rows[0].cost_usd), rows[0].cost_source) == (
+        "dataforseo", "failed", 0, 0.0, "estimated")
