@@ -252,14 +252,37 @@ def run_scan(scan_id: int, report_type: str = "manual") -> None:
         log.exception("Report for scan %s failed", scan_id)
 
 
+def finish_partial_results(session, scan: Scan) -> None:
+    """Metrics and the action plan from the answers a scan did save, so a cut-short scan still shows a dashboard.
+    No site audit: this can run at startup, where a slow third-party fetch must not hold the boot."""
+    if scan.kind != "full" or not scan.completed_runs:
+        return
+    project = session.get(Project, scan.project_id)
+    data = compute_and_store(session, scan)
+    generate_and_store(session, scan, project.brand_name.strip(), data["observations"], None)
+
+
 def recover_interrupted_scans() -> int:
-    """Single-process MVP: scans still active at startup were interrupted by a restart."""
+    """Single-process MVP: scans still active at startup were interrupted by a restart. Their saved answers still
+    become metrics, an action plan and a report."""
+    from app.reports.delivery import deliver_scan_report  # reports build on metrics, which import scans
+
     with SessionLocal() as session:
         stale = session.scalars(select(Scan).where(Scan.status.in_(("queued", "running")))).all()
         for scan in stale:
             scan.status = "failed" if not scan.completed_runs else "partial"
             scan.error_message = "Interrupted by a server restart."
             scan.completed_at = datetime.now(timezone.utc)
+            try:
+                finish_partial_results(session, scan)
+            except Exception:  # recovery must never stop the app from starting
+                log.exception("Could not build results for interrupted scan %s", scan.id)
             finalize_scan_cost(session, scan)
         session.commit()
-        return len(stale)
+        finished = [s.id for s in stale if s.status == "partial" and s.kind == "full"]
+    for scan_id in finished:
+        try:
+            deliver_scan_report(scan_id, "manual")
+        except Exception:
+            log.exception("Report for interrupted scan %s failed", scan_id)
+    return len(stale)
