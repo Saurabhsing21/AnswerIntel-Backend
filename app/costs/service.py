@@ -3,6 +3,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from decimal import Decimal
 
+from sqlalchemy import func, select
+
 from app.common.database import SessionLocal
 from app.costs.models import AICall
 
@@ -79,3 +81,15 @@ def record_call(
             session.commit()
     except Exception:
         log.exception("Could not record %s call cost", provider)
+
+
+def finalize_scan_cost(session, scan) -> None:
+    """Set the scan's cost totals from its ledger rows. Recomputed, never incremented, so it is safe to repeat."""
+    cost, calls, searches = session.execute(
+        select(func.coalesce(func.sum(AICall.cost_usd), 0), func.count(AICall.id), func.coalesce(func.sum(AICall.web_searches), 0)).where(
+            AICall.scan_id == scan.id
+        )
+    ).one()
+    scan.cost_usd = Decimal(cost)
+    scan.ai_calls = int(calls)
+    scan.web_searches = int(searches)

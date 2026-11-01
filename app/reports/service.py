@@ -11,6 +11,7 @@ from app.metrics.router import _engine_name, build_dashboard
 from app.metrics.service import load_observations
 from app.projects.models import Project
 from app.reports.models import PERIOD_DAYS, Report
+from app.scans.models import Scan
 
 
 TITLES = {"weekly": "weekly AI visibility report", "monthly": "monthly AI visibility report", "manual": "AI visibility report"}
@@ -205,6 +206,7 @@ def create_report(session: Session, project: Project, report_type: str, today: d
         period_end=end,
         scan_id=scan_id,
         content=content,
+        cost_usd=session.scalar(select(Scan.cost_usd).where(Scan.id == scan_id)),
     )
     session.add(report)
     session.flush()

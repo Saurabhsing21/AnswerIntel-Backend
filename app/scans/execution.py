@@ -17,7 +17,7 @@ from app.providers.models import engines_for_prompt
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.llm import PermanentLLMError
-from app.costs.service import cost_scope
+from app.costs.service import cost_scope, finalize_scan_cost
 from app.common.database import engine as db_engine
 from app.competitors.models import Competitor
 from app.metrics.alerts import alert_on_drop, alert_on_overtake, notify_first_scan
@@ -82,6 +82,7 @@ class ScanExecutionService:
                         scan.status = "failed"
                         scan.error_message = f"Scan crashed: {exc.__class__.__name__}"
                         scan.completed_at = datetime.now(timezone.utc)
+                        finalize_scan_cost(session, scan)
                         session.commit()
 
     def _run(self, scan_id: int) -> None:
@@ -222,6 +223,7 @@ class ScanExecutionService:
                 scan.status = "failed"
             scan.error_message = last_error if scan.failed_runs else None
             scan.completed_at = datetime.now(timezone.utc)
+            finalize_scan_cost(session, scan)
             if scan.kind == "retest":
                 finish_retest(session, scan)
             session.commit()
@@ -255,5 +257,6 @@ def recover_interrupted_scans() -> int:
             scan.status = "failed" if not scan.completed_runs else "partial"
             scan.error_message = "Interrupted by a server restart."
             scan.completed_at = datetime.now(timezone.utc)
+            finalize_scan_cost(session, scan)
         session.commit()
         return len(stale)

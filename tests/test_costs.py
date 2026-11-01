@@ -222,3 +222,41 @@ def test_google_ai_failed_request_records_failed_zero_cost(monkeypatch):
     assert len(rows) == 1
     assert (rows[0].provider, rows[0].status, rows[0].web_searches, float(rows[0].cost_usd), rows[0].cost_source) == (
         "dataforseo", "failed", 0, 0.0, "estimated")
+
+
+def test_scan_totals_match_ledger_and_finalize_is_idempotent(client, ai_on, monkeypatch):
+    from decimal import Decimal
+
+    from app.costs.service import finalize_scan_cost
+    from app.reports.service import create_report
+
+    registry = ModelRegistry([ModelConfig("one", "test/tot-model", "One")])
+
+    def post(url, json=None, headers=None, timeout=None):
+        content = '{"brands": []}' if json.get("response_format") else "1. Halden is great."
+        return FakeResponse(200, ok_body(content=content))
+
+    monkeypatch.setattr(llm.httpx, "post", post)
+    headers = signup(client, "costtotals")
+    project_id = make_project(client, headers)
+    client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
+    with SessionLocal() as session:
+        project = session.scalar(select(Project).where(Project.id == project_id))
+        scan = ScanService(model_registry=registry).start_scan(session, project)
+        session.commit()
+        scan_id = scan.id
+    ScanService(provider=OpenRouterProvider(), model_registry=registry).run(scan_id)
+    with SessionLocal() as session:
+        scan = session.get(Scan, scan_id)
+        total, count, searches = session.execute(
+            select(func.sum(AICall.cost_usd), func.count(AICall.id), func.coalesce(func.sum(AICall.web_searches), 0)).where(AICall.scan_id == scan_id)
+        ).one()
+        assert count > 0 and total > 0
+        assert (scan.cost_usd, scan.ai_calls, scan.web_searches) == (total, count, searches)
+        finalize_scan_cost(session, scan)
+        session.commit()
+        session.refresh(scan)
+        assert (scan.cost_usd, scan.ai_calls) == (total, count)
+        report = create_report(session, session.get(Project, scan.project_id), "manual")
+        assert report.scan_id == scan_id and report.cost_usd == scan.cost_usd > Decimal(0)
+        assert "cost_usd" not in str(client.get(f"{API}/projects/{project_id}/scans/{scan_id}", headers=headers).json())
