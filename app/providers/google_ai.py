@@ -10,6 +10,7 @@ import httpx
 
 from app.common.config import settings
 from app.common.llm import LLMError, PermanentLLMError
+from app.costs.service import record_call
 from app.providers.base import AIResponse, ProviderContext
 
 URL = "https://api.dataforseo.com/v3/serp/google/ai_mode/live/advanced"
@@ -28,6 +29,16 @@ def location_name(country: str) -> str:
     return COUNTRIES.get(country.upper(), country) or "United States"
 
 
+MODEL = "google-ai-mode"
+
+
+def _record(cost, ok: bool, started: float) -> None:
+    record_call(
+        provider="dataforseo", model=MODEL, usage=None, generation_id=None, cost_usd=cost,
+        web_searches=1 if ok else 0, status="ok" if ok else "failed", latency_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
 def ask_google_ai(prompt: str, context: ProviderContext | None = None) -> AIResponse:
     if not settings.google_ai_enabled:
         raise LLMError("DataForSEO credentials are not set")
@@ -39,22 +50,26 @@ def ask_google_ai(prompt: str, context: ProviderContext | None = None) -> AIResp
             timeout=settings.provider_timeout_seconds,
         )
     except httpx.HTTPError as exc:
+        _record(0, False, started)  # no response came back, so nothing was billed
         raise LLMError(f"DataForSEO unreachable: {exc.__class__.__name__}") from exc
     if response.status_code >= 400:
+        _record(0, False, started)
         error = LLMError if response.status_code == 429 or response.status_code >= 500 else PermanentLLMError
         raise error(f"DataForSEO returned {response.status_code}")
     data = response.json()
     task_result = (data.get("tasks") or [{}])[0]
     if task_result.get("status_code", 20000) >= 40000:
+        _record(data.get("cost"), False, started)
         raise LLMError(f"DataForSEO task failed: {task_result.get('status_message', 'unknown')}"[:200])
     items = ((task_result.get("result") or [{}])[0] or {}).get("items") or []
     overview = next((i for i in items if i.get("type") == "ai_overview"), {})
     references = overview.get("references") or []
     text = overview.get("markdown") or "\n".join(e.get("text") or "" for e in overview.get("items") or [])
     citations = list(dict.fromkeys(r["url"] for r in references if r.get("url")))
+    _record(data.get("cost"), True, started)
     return AIResponse(
         provider="dataforseo",
-        model="google-ai-mode",
+        model=MODEL,
         prompt=prompt,
         text=text,
         raw_response={"cost": data.get("cost"), "ai_overview": overview},

@@ -171,3 +171,53 @@ def test_free_check_calls_are_recorded_as_free_check(ai_on, monkeypatch):
         assert session.get(FreeCheck, check_id).status == "done"
         rows = list(session.scalars(select(AICall).where(AICall.id > before)))
     assert rows and {r.purpose for r in rows} == {"free_check"}
+
+
+class FakeHttpxResponse:
+    def __init__(self, status_code, body=None):
+        self.status_code, self._body = status_code, body or {}
+
+    def json(self):
+        return self._body
+
+
+def test_google_ai_success_records_exact_cost(monkeypatch):
+    from app.providers import google_ai
+
+    monkeypatch.setattr(settings, "dataforseo_login", "login")
+    monkeypatch.setattr(settings, "dataforseo_password", "pw")
+    body = {"cost": 0.0042, "tasks": [{"status_code": 20000, "result": [{"items": [
+        {"type": "ai_overview", "markdown": "Halden is great.", "references": [{"url": "https://a.example"}]}]}]}]}
+    monkeypatch.setattr(google_ai.httpx, "post", lambda *a, **k: FakeHttpxResponse(200, body))
+    with SessionLocal() as session:
+        before = session.scalar(select(func.max(AICall.id))) or 0
+    with cost_scope(purpose="scan_answer", engine="google_ai"):
+        google_ai.ask_google_ai("best crm")
+    with SessionLocal() as session:
+        rows = list(session.scalars(select(AICall).where(AICall.id > before)))
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row.provider, row.model, row.status, row.web_searches) == ("dataforseo", "google-ai-mode", "ok", 1)
+    assert (row.purpose, row.engine, row.cost_source) == ("scan_answer", "google_ai", "provider")
+    assert float(row.cost_usd) == 0.0042
+
+
+def test_google_ai_failed_request_records_failed_zero_cost(monkeypatch):
+    from app.common.llm import LLMError
+    from app.providers import google_ai
+
+    monkeypatch.setattr(settings, "dataforseo_login", "login")
+    monkeypatch.setattr(settings, "dataforseo_password", "pw")
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(google_ai.httpx, "post", boom)
+    with SessionLocal() as session:
+        before = session.scalar(select(func.max(AICall.id))) or 0
+    with pytest.raises(LLMError):
+        google_ai.ask_google_ai("best crm")
+    with SessionLocal() as session:
+        rows = list(session.scalars(select(AICall).where(AICall.id > before)))
+    assert len(rows) == 1
+    assert (rows[0].provider, rows[0].status, rows[0].web_searches, float(rows[0].cost_usd)) == ("dataforseo", "failed", 0, 0.0)
