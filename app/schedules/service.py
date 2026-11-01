@@ -49,7 +49,7 @@ def dispatch_due_scans(
             if not entitlements(session, project.workspace_id).schedules:
                 continue  # the workspace moved to a plan without schedules; the schedule waits for an upgrade
             try:
-                check_budget(session, project.workspace_id)
+                check_budget(session, project.workspace_id, lock=True)
                 scan = ScanService().start_scan(session, project)
             except AppError as exc:
                 session.rollback()

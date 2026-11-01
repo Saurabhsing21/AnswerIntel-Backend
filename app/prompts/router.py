@@ -10,6 +10,7 @@ from app.common.config import settings
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
+from app.costs.service import check_budget
 from app.prompts.models import Prompt
 from app.prompts.schemas import PromptCreate, PromptsAccept, PromptSuggest, PromptUpdate
 from app.prompts.service import PromptDiscoveryService, pool_full_details, pool_full_message
@@ -69,6 +70,7 @@ def generate(project_id: UUID, current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
         require_active(entitlements(session, project.workspace_id))  # generation calls the LLM
+        check_budget(session, project.workspace_id)
         created = PromptDiscoveryService().generate_for_project(session, project)
         session.commit()
         prompts = session.scalars(select(Prompt).where(Prompt.project_id == project.id).order_by(Prompt.id)).all()
@@ -81,6 +83,7 @@ def suggest(project_id: UUID, request: PromptSuggest, current_user: User = Depen
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
         require_pro(entitlements(session, project.workspace_id), "More prompts")
+        check_budget(session, project.workspace_id)
         prompts = PromptDiscoveryService().suggest(session, project, request.instructions.strip(), request.count)
         return {"prompts": prompts}
 

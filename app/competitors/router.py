@@ -7,7 +7,7 @@ from app.auth.dependencies import get_current_user
 from app.common.access import project_access
 from app.common.database import SessionLocal
 from app.competitors.models import Competitor
-from app.costs.service import cost_scope
+from app.costs.service import check_budget, cost_scope
 from sqlalchemy import func
 
 from app.billing.plans import entitlements, require_room
@@ -192,6 +192,7 @@ def competitor_suggestions(project_id: UUID, current_user: User = Depends(get_cu
         project = get_user_project(session, project_id, current_user.id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+        check_budget(session, project.workspace_id)
         tracked = session.scalars(select(Competitor).where(Competitor.project_id == project.id)).all()
         exclude = {c.name.lower() for c in tracked} | {_domain(c.website) for c in tracked if c.website}
         args = (project.brand_name, project.website, project.category, project.country, project.description, exclude)

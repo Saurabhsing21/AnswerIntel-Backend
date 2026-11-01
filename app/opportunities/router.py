@@ -174,7 +174,7 @@ def retest(
         )) if texts else []
         if not prompt_ids:
             raise AppError(409, "NOTHING_TO_RETEST", "This opportunity isn't about specific prompts, so the next weekly scan will show the change.")
-        check_budget(session, project.workspace_id)
+        check_budget(session, project.workspace_id, lock=True)
         before_scan = latest_full_scan(session, project.id)
         scan = ScanService().start_scan(session, project, prompt_ids=prompt_ids, opportunity_id=opportunity.id)
         opportunity.evidence = {**opportunity.evidence, "retest": {
@@ -194,6 +194,7 @@ def draft_opportunity(project_id: UUID, opportunity_id: int, current_user: User 
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
         require_pro(entitlements(session, project.workspace_id), "Drafts")  # calls the LLM
+        check_budget(session, project.workspace_id)
         opportunity = session.scalar(
             select(Opportunity).where(Opportunity.id == opportunity_id, Opportunity.project_id == project.id)
         )

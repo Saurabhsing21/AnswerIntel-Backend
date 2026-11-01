@@ -7,14 +7,17 @@ import re
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
 from app.common.config import settings
 from app.common.llm import LLMError, chat
 from app.common.safe_http import safe_get
-from app.costs.service import cost_scope
+from app.common.database import SessionLocal
+from app.costs.service import check_budget, check_global_budget, cost_scope
 from app.competitors.suggest import suggest_competitors
 from app.users.models import User
+from app.workspaces.models import WorkspaceMember
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
@@ -29,8 +32,21 @@ class Brand(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
 
 
+def _guard_budget(user_id: int) -> None:
+    """Onboarding runs before a project exists: use the user's workspace cap if they have one, else only the global budget."""
+    with SessionLocal() as session:
+        workspace_id = session.scalar(
+            select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user_id).order_by(WorkspaceMember.created_at).limit(1)
+        )
+        if workspace_id:
+            check_budget(session, workspace_id)
+        else:
+            check_global_budget(session)
+
+
 @router.post("/competitors")
 def competitors(payload: Brand, current_user: User = Depends(get_current_user)):
+    _guard_budget(current_user.id)
     with cost_scope(purpose="competitor_suggestion", user_id=current_user.id):
         return suggest_competitors(payload.brand_name, payload.website, payload.category, payload.country, payload.description, set())
 
@@ -72,4 +88,6 @@ def site(url: str, current_user: User = Depends(get_current_user)):
     title = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
     name = _meta(page, "og:site_name") or (re.split(r"\s[|\-–—:]\s", html.unescape(title.group(1)).strip())[0] if title else None)
     description = _meta(page, "og:description", "description")
+    if settings.ai_enabled and (name or description):
+        _guard_budget(current_user.id)  # the category lookup below is an AI call
     return {"name": name[:100] if name else None, "description": description[:300] if description else None, "categories": _categories(name, description, current_user.id)}

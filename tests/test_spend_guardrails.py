@@ -78,3 +78,114 @@ def test_retest_is_blocked_by_the_workspace_cap(client):
     spend(workspace_of(project_id), "60")
     res = client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/retest", headers=headers)
     assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
+
+
+def capped_project(client, prefix):
+    headers, project_id = project_with_prompts(client, prefix)
+    spend(workspace_of(project_id), "60")
+    return headers, project_id
+
+
+def test_prompt_generation_and_suggestions_are_blocked_by_the_workspace_cap(client):
+    headers, project_id = capped_project(client, "capprompts")
+    for path, body in (("generate", None), ("suggest", {"instructions": "pricing questions", "count": 3})):
+        res = client.post(f"{API}/projects/{project_id}/prompts/{path}", headers=headers, json=body)
+        assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
+
+
+def test_competitor_suggestions_are_blocked_by_the_workspace_cap(client):
+    headers, project_id = capped_project(client, "capcomp")
+    res = client.get(f"{API}/projects/{project_id}/competitors/suggestions", headers=headers)
+    assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
+
+
+def test_opportunity_drafts_are_blocked_by_the_workspace_cap(client):
+    headers, project_id = project_with_prompts(client, "capdraft")
+    scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
+    for _ in range(60):
+        if client.get(f"{API}/projects/{project_id}/scans/{scan['id']}", headers=headers).json()["status"] in ("completed", "failed"):
+            break
+        time.sleep(0.5)
+    target = client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json()[0]
+    spend(workspace_of(project_id), "60")
+    res = client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/draft", headers=headers)
+    assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
+
+
+def test_onboarding_ai_calls_use_the_users_workspace_cap(client, monkeypatch):
+    headers, project_id = capped_project(client, "caponboard")
+    brand = {"brand_name": "Halden", "website": "https://halden.co", "category": "CRM", "country": "US"}
+    res = client.post(f"{API}/onboarding/competitors", headers=headers, json=brand)
+    assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    page = "<title>Halden</title><meta name='description' content='CRM for startups'>"
+    monkeypatch.setattr("app.onboarding.router.safe_get", lambda url: (200, page))
+    res = client.get(f"{API}/onboarding/site", params={"url": "halden.co"}, headers=headers)
+    assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
+
+
+def test_onboarding_without_a_workspace_is_only_held_by_the_global_budget(client, monkeypatch):
+    from app.workspaces.models import WorkspaceMember
+
+    headers = signup(client, "nows")
+    with SessionLocal() as session:
+        session.query(WorkspaceMember).filter(WorkspaceMember.user_id == client.get(f"{API}/auth/me", headers=headers).json()["id"]).delete()
+        session.commit()
+    spend(None, "0.5")
+    monkeypatch.setattr(settings, "daily_ai_budget_usd", 0.5)
+    brand = {"brand_name": "Halden", "website": "https://halden.co", "category": "CRM", "country": "US"}
+    res = client.post(f"{API}/onboarding/competitors", headers=headers, json=brand)
+    assert res.status_code == 429 and "AI_BUDGET_REACHED" in res.text
+
+
+def test_free_check_is_blocked_by_the_global_budget(client, monkeypatch):
+    monkeypatch.setattr(settings, "free_check_enabled", True)
+    spend(None, "0.5")
+    monkeypatch.setattr(settings, "daily_ai_budget_usd", 0.5)
+    body = {"brand_name": "Halden", "website": f"nobudget-{uuid.uuid4().hex[:8]}.example.com", "category": "CRM software"}
+    res = client.post(f"{API}/free-check", json=body)
+    assert res.status_code == 429 and "AI_BUDGET_REACHED" in res.text
+
+
+def test_workspace_lock_key_is_stable_and_distinct_per_workspace():
+    a, b = uuid.uuid4(), uuid.uuid4()
+    assert costs.workspace_lock_key(a) == costs.workspace_lock_key(uuid.UUID(str(a)))
+    assert costs.workspace_lock_key(a) != costs.workspace_lock_key(b)
+    assert -(2**63) <= costs.workspace_lock_key(a) < 2**63
+
+
+def test_concurrent_starts_for_a_one_scan_workspace_create_exactly_one_scan(client, trial_signups, outbox):
+    """Check + insert run under the workspace lock, so the second start sees the first scan instead of racing past the limit."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import func, select
+
+    from app.common.errors import AppError
+    from app.scans.models import Scan
+    from app.scans.service import ScanService
+    from tests.test_free_trial import verify
+
+    headers = signup(client, "race")
+    verify(client, outbox, headers)  # the free plan allows one scan in total
+    project_id = make_project(client, headers)
+    client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
+    barrier = Barrier(2)
+
+    def start(_):
+        with SessionLocal() as session:
+            project = session.get(Project, uuid.UUID(project_id))
+            barrier.wait(timeout=10)
+            try:
+                costs.check_budget(session, project.workspace_id, lock=True)
+                ScanService().start_scan(session, project)
+                session.commit()
+                return "started"
+            except AppError as exc:
+                return exc.code
+
+    with ThreadPoolExecutor(2) as pool:
+        outcomes = sorted(pool.map(start, range(2)))
+    assert outcomes[1] == "started" and outcomes[0] in ("PLAN_LIMIT", "SCAN_ALREADY_RUNNING", "SCAN_LIMIT_REACHED")
+    with SessionLocal() as session:
+        assert session.scalar(select(func.count()).select_from(Scan).where(Scan.project_id == uuid.UUID(project_id))) == 1

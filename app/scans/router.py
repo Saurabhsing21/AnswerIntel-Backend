@@ -67,7 +67,7 @@ def create_scan(
         if current_user.email_verified_at is None and entitlements(session, project.workspace_id).plan == "free":
             # The free scan costs real money: one per confirmed inbox, not one per throwaway address.
             raise AppError(403, "EMAIL_NOT_VERIFIED", "Confirm your email to run your free scan. We sent you a link.")
-        check_budget(session, project.workspace_id)
+        check_budget(session, project.workspace_id, lock=True)
         scan = ScanService().start_scan(session=session, project=project)
         session.commit()
         session.refresh(scan)

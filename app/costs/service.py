@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.billing.plans import PLANS, entitlements
 from app.common.config import settings
@@ -127,8 +127,27 @@ def workspace_cap(session, workspace_id: UUID) -> Decimal:
     return Decimal(price) * Decimal(str(settings.workspace_cost_cap_ratio))
 
 
-def check_budget(session, workspace_id: UUID) -> None:
-    """Refuse to start a scan once the global daily budget or this workspace's monthly cap is spent."""
+GLOBAL_LOCK_KEY = 7_340_001  # arbitrary constant: all global-budget checks that create a scan queue on it
+
+
+def workspace_lock_key(workspace_id: UUID) -> int:
+    """A stable signed 64-bit key for one workspace's advisory lock (the first 8 bytes of its UUID)."""
+    return int.from_bytes(workspace_id.bytes[:8], "big", signed=True)
+
+
+def _lock_budget(session, workspace_id: UUID | None) -> None:
+    """Serialize budget checks with the scan insert that follows them.
+
+    Transaction-level advisory locks are held until the caller commits or rolls back, so two concurrent scan
+    starts cannot both read "room left" before either has written its scan. Always global first, then workspace,
+    so two starts can never wait on each other in a cycle."""
+    session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": GLOBAL_LOCK_KEY})
+    if workspace_id is not None:
+        session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": workspace_lock_key(workspace_id)})
+
+
+def check_global_budget(session) -> None:
+    """Refuse once the global daily AI budget is spent. For callers with no workspace (the anonymous free check)."""
     global _alerted_on
     if settings.daily_ai_budget_usd > 0:
         spent = spend_today(session)
@@ -138,5 +157,14 @@ def check_budget(session, workspace_id: UUID) -> None:
                 _alerted_on = today
                 log.error("Daily AI budget reached: spent $%s of $%s today. Scans are paused until tomorrow (UTC).", spent, settings.daily_ai_budget_usd)
             raise AppError(429, "AI_BUDGET_REACHED", "Scans are paused for today while we add capacity. Try again tomorrow.")
+
+
+def check_budget(session, workspace_id: UUID, lock: bool = False) -> None:
+    """Refuse AI work once the global daily budget or this workspace's monthly cap is spent.
+
+    Pass `lock=True` when the caller creates a scan in this same transaction (see `_lock_budget`)."""
+    if lock:
+        _lock_budget(session, workspace_id)
+    check_global_budget(session)
     if workspace_spend_this_month(session, workspace_id) >= workspace_cap(session, workspace_id):
         raise AppError(402, "WORKSPACE_COST_CAP", "This workspace has reached this month's scan capacity. It resets on the 1st, or upgrade for more.")
