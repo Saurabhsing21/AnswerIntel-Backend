@@ -22,6 +22,12 @@ def rate_limits_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def daily_budget_off(monkeypatch):
+    """The test database keeps every ai_calls row ever written; the global budget has its own tests in test_spend_guardrails.py."""
+    monkeypatch.setattr(settings, "daily_ai_budget_usd", 0)
+
+
+@pytest.fixture(autouse=True)
 def no_real_ai_keys(monkeypatch):
     """Keys in a developer's .env must never be used by tests: real AI calls cost money."""
     for key in ("openrouter_api_key", "dataforseo_login", "dataforseo_password", "resend_api_key", "stripe_secret_key"):

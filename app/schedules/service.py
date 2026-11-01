@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.billing.plans import entitlements
 from app.common.database import SessionLocal
 from app.common.errors import AppError
+from app.costs.service import check_budget
 from app.projects.models import Project
 from app.scans.models import Scan
 from app.scans.service import ScanService
@@ -48,6 +49,7 @@ def dispatch_due_scans(
             if not entitlements(session, project.workspace_id).schedules:
                 continue  # the workspace moved to a plan without schedules; the schedule waits for an upgrade
             try:
+                check_budget(session, project.workspace_id)
                 scan = ScanService().start_scan(session, project)
             except AppError as exc:
                 session.rollback()

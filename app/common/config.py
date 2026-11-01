@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     dataforseo_login: str = ""
     dataforseo_password: str = ""
 
+    # Spend guardrails. Daily budget: all AI spend across every workspace per UTC day (0 = no limit).
+    # Workspace cap: this share of the plan's monthly price; plans priced at 0 use the flat dollar cap.
+    daily_ai_budget_usd: float = 10.0
+    workspace_cost_cap_ratio: float = 0.5
+    free_workspace_cost_cap_usd: float = 1.0
+
     # Free website check: a few unbranded prompts on two engines (about $0.09 each). The daily cap bounds cost.
     # Off until launch: while off the public endpoint answers 404, so nobody can run paid AI calls through it.
     free_check_enabled: bool = False
