@@ -35,6 +35,13 @@ def no_real_ai_keys(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def r2_off(monkeypatch):
+    """Real bucket credentials in a developer's .env must never be used by tests; R2 tests fake the S3 client."""
+    for key in ("r2_account_id", "r2_bucket", "r2_access_key_id", "r2_secret_access_key"):
+        monkeypatch.setattr(settings, key, "")
+
+
+@pytest.fixture(autouse=True)
 def no_network_site_audit(monkeypatch):
     """Scans audit the brand's website; tests must never reach the real internet."""
     monkeypatch.setattr("app.opportunities.site_audit.safe_get", lambda url, **kwargs: None)

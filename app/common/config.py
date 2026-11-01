@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     stripe_price_growth_yearly: str = ""
     stripe_price_pro_monthly: str = ""
     stripe_price_pro_yearly: str = ""
+    # File storage (Cloudflare R2). Any value missing = report PDFs stay in the database.
+    r2_account_id: str = ""
+    r2_bucket: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
     app_base_url: str = "http://localhost:3000"  # where Stripe sends people back after Checkout and the Portal
 
     model_config = {
@@ -122,6 +127,10 @@ class Settings(BaseSettings):
     @property
     def billing_enabled(self) -> bool:
         return bool(self.stripe_secret_key.strip())
+
+    @property
+    def r2_enabled(self) -> bool:
+        return all(v.strip() for v in (self.r2_account_id, self.r2_bucket, self.r2_access_key_id, self.r2_secret_access_key))
 
     @property
     def ai_enabled(self) -> bool:

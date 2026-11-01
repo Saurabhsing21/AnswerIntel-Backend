@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import BackgroundTasks
 
 from app.common.config import settings
+from app.common import storage
 from app.common.database import SessionLocal
 from app.reports.document import build_document
 from app.reports.models import Report, ReportPdf
@@ -40,7 +41,13 @@ def build_report_pdf(report_id: int) -> None:
         session.add(row)
         started = time.monotonic()
         try:
-            row.pdf = render_pdf_bytes(build_document(report.content))
+            data = render_pdf_bytes(build_document(report.content))
+            if settings.r2_enabled:
+                key = f"reports/{report.project_id}/{report_id}.pdf"
+                storage.put_pdf(key, data)
+                row.storage_key, row.pdf = key, None
+            else:
+                row.storage_key, row.pdf = None, data
         except Exception as exc:
             log.exception("PDF for report %s failed", report_id)
             row.status, row.error = "failed", str(exc)[:300]

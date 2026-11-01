@@ -4,13 +4,14 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.billing.plans import entitlements, require_pro
+from app.common import storage
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -81,6 +82,9 @@ def _export(session: Session, report: Report, format: str, background_tasks: Bac
         if pdf and pdf.status == "ready":
             name = f"{report.content['brand']} AI Visibility Report {report.period_end:%Y-%m-%d}.pdf"
             safe = "".join(ch if ch.isalnum() or ch in " -." else "_" for ch in name)
+            if pdf.storage_key:
+                disposition = f'inline; filename="{safe}"'
+                return RedirectResponse(storage.signed_url(pdf.storage_key, disposition=disposition), status_code=307)
             return Response(pdf.pdf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{safe}"'})
         if not pdf or pdf.status == "failed":  # reports from before the worker, or a failed render: try again
             queue_report_pdf(report.id, background_tasks)

@@ -42,6 +42,7 @@ class ReportPdf(Base):
     report_id: Mapped[int] = mapped_column(ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)  # pending, ready or failed
     pdf: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(String(255), nullable=True)  # set = the file lives in R2, `pdf` is empty
     error: Mapped[str | None] = mapped_column(String(300), nullable=True)
     render_ms: Mapped[int | None] = mapped_column(nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

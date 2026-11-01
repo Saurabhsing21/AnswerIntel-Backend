@@ -9,9 +9,11 @@ from app.auth.dependencies import get_current_user
 from app.billing.plans import check_engine_choice, engines_for, entitlements, require_room
 from app.billing.service import project_count
 from app.common.access import project_access
+from app.common import storage
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.projects.models import Project
+from app.reports.models import Report, ReportPdf
 from app.schedules.models import ScanSchedule
 from app.workspaces.models import WorkspaceMember
 from app.projects.schemas import ProjectCreate, ProjectUpdate
@@ -203,8 +205,15 @@ def delete_project(
                 detail="Project not found",
             )
 
+        keys = session.scalars(
+            select(ReportPdf.storage_key)
+            .join(Report, Report.id == ReportPdf.report_id)
+            .where(Report.project_id == project.id, ReportPdf.storage_key.is_not(None))
+        ).all()
         session.delete(project)
         session.commit()
+        for key in keys:  # the rows cascade away; their R2 objects would not
+            storage.delete(key)
 
         return {
             "message": "Project deleted successfully"
