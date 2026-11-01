@@ -16,6 +16,7 @@ from app.scans.service import ScanService
 from app.common.access import get_owned_project
 from app.common.database import SessionLocal
 from app.common.errors import AppError
+from app.costs.service import check_budget
 from app.metrics.models import MetricSnapshot
 from app.opportunities.draft import draft_for
 from app.opportunities.models import Opportunity
@@ -159,6 +160,7 @@ def retest(
         )) if texts else []
         if not prompt_ids:
             raise AppError(409, "NOTHING_TO_RETEST", "This opportunity isn't about specific prompts, so the next weekly scan will show the change.")
+        check_budget(session, project.workspace_id)
         before_scan = latest_full_scan(session, project.id)
         scan = ScanService().start_scan(session, project, prompt_ids=prompt_ids, opportunity_id=opportunity.id)
         opportunity.evidence = {**opportunity.evidence, "retest": {

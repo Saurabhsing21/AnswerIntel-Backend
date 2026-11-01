@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -34,8 +35,8 @@ def project_with_prompts(client, prefix):
 
 def test_global_daily_budget_blocks_user_scans_and_alerts_once(client, monkeypatch, caplog):
     headers, project_id = project_with_prompts(client, "budget")
-    with SessionLocal() as session:
-        monkeypatch.setattr(settings, "daily_ai_budget_usd", float(costs.spend_today(session)))  # already reached
+    spend(workspace_of(project_id), "0.5")  # a known row for today, so spend_today is at least 0.5 whatever else is stored
+    monkeypatch.setattr(settings, "daily_ai_budget_usd", 0.5)  # small and positive: reached
     monkeypatch.setattr(costs, "_alerted_on", None)
     with caplog.at_level(logging.ERROR, logger=costs.log.name):
         for _ in range(2):
@@ -64,3 +65,16 @@ def test_scheduled_dispatch_skips_a_capped_workspace(client):
     spend(workspace_of(project_id), "60")
     slot = next_slot(created_at(project_id), 2, 10)
     assert dispatch_due_scans(slot, lambda *a: None, project_ids=[uuid.UUID(project_id)]) == []
+
+
+def test_retest_is_blocked_by_the_workspace_cap(client):
+    headers, project_id = project_with_prompts(client, "capretest")
+    scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
+    for _ in range(60):
+        if client.get(f"{API}/projects/{project_id}/scans/{scan['id']}", headers=headers).json()["status"] in ("completed", "failed"):
+            break
+        time.sleep(0.5)
+    target = next(o for o in client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json() if o["related_prompts"])
+    spend(workspace_of(project_id), "60")
+    res = client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/retest", headers=headers)
+    assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
