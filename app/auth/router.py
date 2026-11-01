@@ -21,6 +21,8 @@ from app.auth.dependencies import get_current_user, is_admin
 from app.common.ratelimit import limit_login
 from app.workspaces.models import Workspace, WorkspaceMember
 from app.billing import service as billing
+from app.auth import account
+from fastapi.responses import JSONResponse
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -271,4 +273,37 @@ def logout_all(current_user: User = Depends(get_current_user)):
     with SessionLocal() as session:
         _revoke_all(session, current_user.id)
         session.commit()
+    return {"ok": True}
+
+
+@router.get("/me/export")
+def export_me(current_user: User = Depends(get_current_user)):
+    """Everything the user owns, as a download. Raw provider responses and cost figures are not part of it."""
+    with SessionLocal() as session:
+        data = account.export_data(session, current_user)
+    name = f"seenlens-export-{datetime.now(timezone.utc).date().isoformat()}.json"
+    return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+class DeleteAccount(BaseModel):
+    password: str | None = None
+    google_credential: str | None = None
+
+
+@router.delete("/me")
+def delete_me(payload: DeleteAccount, current_user: User = Depends(get_current_user)):
+    """Permanent. Confirmed with the password, or with a fresh Google sign-in for accounts that never set one."""
+    if payload.password is not None:
+        confirmed = verify_password(payload.password, current_user.password_hash)
+    elif payload.google_credential:
+        confirmed = google.verified_email(payload.google_credential) == current_user.email.lower()
+    else:
+        confirmed = False
+    if not confirmed:
+        raise AppError(400, "CONFIRMATION_FAILED", "We couldn't confirm it's you. Check your password or sign in with Google again.")
+    with SessionLocal() as session:
+        user = session.get(User, current_user.id)
+        keys = account.delete_account(session, user)
+        session.commit()
+    account.delete_files(keys)  # after the commit: a failed delete must not undo the account's removal
     return {"ok": True}

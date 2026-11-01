@@ -62,3 +62,9 @@ def verify_event(payload: bytes, signature: str | None) -> dict:
     except (stripe.SignatureVerificationError, UnicodeDecodeError) as exc:
         raise ValueError("bad signature") from exc
     return json.loads(payload)
+
+
+def cancel_subscription(subscription_id: str) -> None:
+    """Ends a subscription now (account deletion), so the customer is never billed again."""
+    client = _client()
+    _call(lambda: client.v1.subscriptions.cancel(subscription_id))

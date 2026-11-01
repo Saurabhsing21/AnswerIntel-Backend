@@ -61,6 +61,11 @@ def score(mention: float, recommend: float, cite: float) -> int:
     return round(100 * (0.4 * mention + 0.4 * recommend + 0.2 * cite))
 
 
+ESTIMATE_NOTE = ("These numbers are estimates from the answers we read, not exact measurements: the 0–100 score is 40% mention rate, "
+                 "40% recommendation rate and 20% citation rate; each 95% range shows how far a rate could move by chance; the 30- and "
+                 "90-day goals are targets, not forecasts.")
+
+
 def score_label(value: int) -> str:
     return "NOT VISIBLE" if value < 10 else "EMERGING" if value < 30 else "VISIBLE" if value < 60 else "LEADING"
 
@@ -328,7 +333,7 @@ def build_document(content: dict, report_id: int | None = None) -> dict:
         "engines": engines_used, "questions": total_q, "answers": n,
         "answers_expected": total_q * max(1, len(engines_used)), "competitors": len(rivals),
         "you": you_row, "leader": leader_row, "brands": brands, "by_score": sorted(brands, key=lambda b: -b["score"]),
-        "open_count": open_n, "score": you_row["score"], "score_label": score_label(you_row["score"]),
+        "open_count": open_n, "estimate_note": ESTIMATE_NOTE, "score": you_row["score"], "score_label": score_label(you_row["score"]),
         "summary": summary, "findings": findings[:3], "do_first": actions[0] if actions else None,
         "metrics": metrics,
         "gaps": [

@@ -16,6 +16,7 @@ export type QuestionRow = {
 };
 
 export type Doc = {
+  estimate_note: string;
   brand: string; website: string; category: string; country: string; scan_no: number; baseline: boolean;
   scan_date: string; generated: string; engines: string[]; questions: number; answers: number; answers_expected: number;
   competitors: number; you: Brand; leader: Brand | null; brands: Brand[]; by_score: Brand[]; open_count: number;

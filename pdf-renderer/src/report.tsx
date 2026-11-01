@@ -188,9 +188,10 @@ function Summary({ doc }: { doc: Doc }) {
   return (
     <Shell doc={doc}>
       <SectionHead n="00" title="Executive summary" lead={`The short version for founders and marketing leads: where ${doc.brand} stands in AI answers today, and the single most valuable thing to fix first.`} />
+      <Text style={{ fontSize: 7, color: C.muted, marginBottom: 8 }}>{doc.estimate_note}</Text>
       <View style={{ flexDirection: "row" }}>
         <Card dark style={{ width: 150, alignItems: "center", paddingVertical: 14 }}>
-          <Text style={{ fontSize: 7, fontWeight: 700, color: "#C9CFEE" }}>AI VISIBILITY SCORE</Text>
+          <Text style={{ fontSize: 7, fontWeight: 700, color: "#C9CFEE" }}>AI VISIBILITY SCORE (ESTIMATE)</Text>
           <View style={{ marginTop: 10 }}><Gauge value={doc.score} size={120} /></View>
           <Text style={{ fontSize: 30, fontWeight: 700, color: C.white, marginTop: -30 }}>{doc.score}</Text>
           <Text style={{ fontSize: 7, color: "#C9CFEE" }}>out of 100</Text>
@@ -224,7 +225,7 @@ function Summary({ doc }: { doc: Doc }) {
           <ShareOfVoice brands={doc.brands} size={92} />
         </Card>
         <Card style={{ flex: 1 }}>
-          <CardTitle title="Visibility score by brand" sub="0–100, higher means AI names and picks the brand more" />
+          <CardTitle title="Visibility score by brand (estimate)" sub="0–100, higher means AI names and picks the brand more" />
           {doc.by_score.slice(0, 5).map((b) => (
             <View key={b.name} style={{ flexDirection: "row", alignItems: "center", marginBottom: 7 }}>
               <Text style={{ fontSize: 7.5, width: 62, textAlign: "right", marginRight: 8, color: b.is_you ? C.you : C.ink, fontWeight: b.is_you ? 700 : 400 }}>{b.name}</Text>
@@ -264,7 +265,7 @@ function Standing({ doc }: { doc: Doc }) {
   ];
   return (
     <Shell doc={doc}>
-      <SectionHead n="01" title="Where you stand" lead={`Each metric is a share of the ${doc.answers} answers collected. The 95% range shows how far the number could move by chance with a sample this size.`} />
+      <SectionHead n="01" title="Where you stand" lead={`Each metric is a share of the ${doc.answers} answers collected. The 95% range is an estimate of how far the number could move by chance with a sample this size.`} />
       <Table cols={cols} rows={doc.metrics} />
       <Card style={{ marginTop: 12 }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 8 }}>
@@ -814,13 +815,13 @@ function Goals({ doc }: { doc: Doc }) {
           cols={[
             { title: "Metric", width: "22%", render: (g: Goal) => g.metric, style: { fontWeight: 700 } },
             { title: "Today", width: "12%", render: (g: Goal) => g.today, style: { color: C.you, fontWeight: 700 } },
-            { title: "30-day goal", width: "20%", render: (g: Goal) => g.d30, style: { color: C.amberInk } },
-            { title: "90-day goal", width: "18%", render: (g: Goal) => g.d90, style: { color: C.good, fontWeight: 700 } },
+            { title: "30-day goal (est.)", width: "20%", render: (g: Goal) => g.d30, style: { color: C.amberInk } },
+            { title: "90-day goal (est.)", width: "18%", render: (g: Goal) => g.d90, style: { color: C.good, fontWeight: 700 } },
             { title: "Where to look first", width: "28%", render: (g: Goal) => g.where, style: { color: C.ink2 } },
           ]}
           rows={doc.goals}
         />
-        <Text style={{ fontSize: 7, color: C.muted, marginTop: 4 }}>Goals are directional, not guaranteed. Changes smaller than the 95% range may be normal variation.</Text>
+        <Text style={{ fontSize: 7, color: C.muted, marginTop: 4 }}>{doc.estimate_note} Goals are directional, not guaranteed. Changes smaller than the 95% range may be normal variation.</Text>
       </View>
       <H2>Recommended setup for the next scan</H2>
       {doc.next_setup.map((s) => (
