@@ -45,20 +45,37 @@ def test_limits_can_be_disabled(client, monkeypatch):
 def test_redis_backend_counts_in_a_shared_store(monkeypatch):
     class FakeRedis:
         def __init__(self):
-            self.counts, self.expiries = {}, {}
+            self.counts, self.expiries, self.queued = {}, {}, []
+
+        def pipeline(self):
+            return self
+
+        def set(self, key, value, ex, nx):
+            self.queued.append(("set", key, value, ex, nx))
 
         def incr(self, key):
-            self.counts[key] = self.counts.get(key, 0) + 1
-            return self.counts[key]
+            self.queued.append(("incr", key))
 
-        def expire(self, key, seconds):
-            self.expiries[key] = seconds
+        def execute(self):
+            results = []
+            for op, key, *args in self.queued:
+                if op == "set":
+                    value, ex, _ = args
+                    created = key not in self.counts
+                    if created:
+                        self.counts[key], self.expiries[key] = value, ex
+                    results.append(created)
+                else:
+                    self.counts[key] += 1
+                    results.append(self.counts[key])
+            self.queued = []
+            return results
 
     fake = FakeRedis()
     monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379/0")
     monkeypatch.setattr(ratelimit.limiter, "_redis", lambda: fake)
     assert [ratelimit.limiter.allow("k", 2, 60) for _ in range(3)] == [True, True, False]
-    assert fake.expiries == {"rl:k": 60}  # the window is set once, on the first hit
+    assert fake.expiries == {"rl:k": 60}  # the window is set once, together with the counter
 
 
 def test_a_broken_redis_does_not_take_the_api_down(monkeypatch):
@@ -76,3 +93,26 @@ def test_account_deletion_guesses_are_limited(client):
     assert statuses[:4] == [400] * 4  # signup's own login used one of the five attempts
     assert 429 in statuses and statuses[-1] == 429
     assert client.get(f"{API}/auth/me", headers=headers).status_code == 200
+
+
+def test_visitor_address_from_the_website_counts_per_visitor(client, monkeypatch):
+    # Every login reaches the API from the website's server; with the shared secret, each visitor has their own limit.
+    monkeypatch.setattr(settings, "proxy_shared_secret", "s3cret")
+    body = {"email": f"nobody-{uuid.uuid4().hex}@example.com", "password": "wrong-password"}
+
+    def login(ip):
+        return client.post(f"{API}/auth/login", json=body, headers={"X-Proxy-Secret": "s3cret", "X-Client-IP": ip}).status_code
+
+    assert [login("203.0.113.1") for _ in range(6)][-1] == 429
+    assert login("203.0.113.2") == 401  # another visitor behind the same website server is unaffected
+
+
+def test_visitor_address_without_the_secret_is_ignored(client, monkeypatch):
+    # Anyone can call the API directly: a made-up address must not buy a fresh limit.
+    monkeypatch.setattr(settings, "proxy_shared_secret", "s3cret")
+    body = {"email": f"nobody-{uuid.uuid4().hex}@example.com", "password": "wrong-password"}
+    statuses = [
+        client.post(f"{API}/auth/login", json=body, headers={"X-Proxy-Secret": "wrong", "X-Client-IP": f"198.51.100.{i}"}).status_code
+        for i in range(7)
+    ]
+    assert statuses[5:] == [429, 429]

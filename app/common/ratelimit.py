@@ -1,5 +1,6 @@
 """Fixed-window rate limiting (PRD 60). Shared via Redis when configured, per-process memory otherwise."""
 
+import hmac
 import logging
 import threading
 import time
@@ -35,10 +36,12 @@ class RateLimiter:
             return True
         if settings.redis_url:
             try:
-                client = self._redis()
-                count = client.incr(f"rl:{key}")
-                if count == 1:
-                    client.expire(f"rl:{key}", window)
+                # One MULTI/EXEC: the counter never exists without its expiry, even if this process dies mid-way
+                # (a counter without one would block that key forever).
+                pipe = self._redis().pipeline()
+                pipe.set(f"rl:{key}", 0, ex=window, nx=True)
+                pipe.incr(f"rl:{key}")
+                count = pipe.execute()[1]
                 return count <= limit
             except Exception:
                 # Fail open: losing protection briefly beats taking the whole API down with Redis.
@@ -59,23 +62,29 @@ class RateLimiter:
 limiter = RateLimiter()
 
 
-def _client_ip(request: Request) -> str:
-    # Behind a proxy, run uvicorn with --proxy-headers so this is the real client address.
+def client_ip(request: Request) -> str:
+    """The visitor's address. The website's server calls the API for everyone, so it passes each visitor's address
+    in X-Client-IP; that header is trusted only with the shared secret, because anyone can call the API directly."""
+    secret = settings.proxy_shared_secret
+    if secret and hmac.compare_digest(request.headers.get("x-proxy-secret", ""), secret):
+        forwarded = request.headers.get("x-client-ip", "").strip()
+        if forwarded:
+            return forwarded
     return request.client.host if request.client else "unknown"
 
 
 def limit_login(request: Request) -> None:
-    if not limiter.allow(f"login:{_client_ip(request)}", settings.login_rate_limit_per_minute):
+    if not limiter.allow(f"login:{client_ip(request)}", settings.login_rate_limit_per_minute):
         raise AppError(429, "RATE_LIMITED", "Too many login attempts. Please wait a minute and try again.")
 
 
 def limit_waitlist(request: Request) -> None:
-    if not limiter.allow(f"waitlist:{_client_ip(request)}", settings.waitlist_rate_limit_per_minute):
+    if not limiter.allow(f"waitlist:{client_ip(request)}", settings.waitlist_rate_limit_per_minute):
         raise AppError(429, "RATE_LIMITED", "Too many requests. Please try again in a minute.")
 
 
 def limit_api(request: Request) -> None:
-    who = _client_ip(request)
+    who = client_ip(request)
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() == "bearer" and token:
         try:

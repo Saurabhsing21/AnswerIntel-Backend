@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     max_active_prompts: int = 700
 
     cors_origins: str = "http://localhost:3000"
+    # Shared with the website's server (same value there). Requests carrying it may name the visitor's address in
+    # X-Client-IP, so rate limits count per visitor instead of per website server. Empty = only the connecting address.
+    proxy_shared_secret: str = ""
 
     # Report email delivery (Resend). Empty key = sending is disabled and the API says so.
     # Google Identity Services web client ID. Empty = "Continue with Google" is hidden.

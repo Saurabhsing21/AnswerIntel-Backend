@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
+from app.common.ratelimit import client_ip
 from app.freecheck.models import FreeCheck
 from app.costs.service import check_global_budget
 from app.freecheck.service import run_free_check
@@ -44,9 +45,9 @@ class FreeCheckRequest(BaseModel):
 
 
 def _client(request: Request) -> str:
-    # Behind the website's server route the first forwarded address is the visitor. It can be spoofed, so the
-    # global daily cap, not this, is what bounds cost.
-    ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (request.client.host if request.client else "")
+    # The visitor's address, trusted only from the website's server (shared secret); the global daily cap still
+    # bounds cost if the secret is not configured.
+    ip = client_ip(request)
     return hashlib.sha256(f"{settings.jwt_secret_key}:{ip}".encode()).hexdigest()
 
 
