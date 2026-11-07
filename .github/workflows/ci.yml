@@ -24,7 +24,7 @@ jobs:
       JWT_SECRET_KEY: ci-only-secret-not-used-anywhere-else
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
           cache: pip
