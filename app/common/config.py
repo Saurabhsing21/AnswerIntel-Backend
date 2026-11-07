@@ -120,6 +120,10 @@ class Settings(BaseSettings):
         # The waitlist-only launch site has no scans, so it may run without one.
         if self.app_env == "production" and not self.waitlist_only and not self.openrouter_api_key.strip():
             raise ValueError("OPENROUTER_API_KEY is required when APP_ENV=production (unless WAITLIST_ONLY=true).")
+        # Without a queue, scans run inside the API process: a deploy or restart cuts them off, and their retry waits
+        # hold the API's threads. The waitlist-only site runs no scans.
+        if self.app_env == "production" and not self.waitlist_only and not self.redis_url.strip():
+            raise ValueError("REDIS_URL is required when APP_ENV=production (unless WAITLIST_ONLY=true).")
         return self
 
     @property
