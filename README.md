@@ -13,8 +13,9 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
-With `REDIS_URL` empty, scans run inside the API process (fine for development). Without
-`OPENROUTER_API_KEY` every scan uses the simulated provider, and the API and dashboard label that data as simulated.
+With `REDIS_URL` empty, scans run inside the API process (fine for development; production refuses to start
+without it unless `WAITLIST_ONLY=true`). Without `OPENROUTER_API_KEY` scans and other AI features answer
+503 `AI_UNAVAILABLE`; the tests install a simulated provider of their own.
 
 ### With the job queue (production-like)
 

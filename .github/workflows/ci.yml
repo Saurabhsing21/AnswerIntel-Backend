@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: seenlens_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # Migrations read DATABASE_URL; the tests read TEST_DATABASE_URL (they never touch any other database).
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/seenlens_test
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/seenlens_test
+      JWT_SECRET_KEY: ci-only-secret-not-used-anywhere-else
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: pdf-renderer/package-lock.json
+      - run: pip install -r requirements.txt pip-audit
+      # Known vulnerabilities in a pinned dependency fail the build.
+      - run: pip-audit -r requirements.txt
+      # The report PDF test runs only when the renderer is built.
+      - run: npm ci && npm run build
+        working-directory: pdf-renderer
+      # A fresh database proves the whole migration chain, and `check` fails if models and migrations disagree.
+      - run: alembic upgrade head
+      - run: alembic check
+      - run: python -m pytest -q
