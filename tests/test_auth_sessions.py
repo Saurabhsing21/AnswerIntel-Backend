@@ -41,13 +41,54 @@ def test_refresh_rotates_the_token_pair(client):
     assert me.status_code == 200
 
 
+def age_rotations(email: str, seconds: int) -> None:
+    """Pretend every rotation of this user's tokens so far happened `seconds` ago."""
+    with SessionLocal() as session:
+        user_id = session.scalar(select(User.id).where(User.email == email))
+        session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_not(None))
+            .values(revoked_at=datetime.now(timezone.utc) - timedelta(seconds=seconds))
+        )
+        session.commit()
+
+
 def test_replaying_a_used_refresh_token_signs_the_user_out_everywhere(client):
-    _, tokens = register_and_login(client)
+    email, tokens = register_and_login(client)
     newer = refresh(client, tokens["refresh_token"]).json()
+    age_rotations(email, 31)  # past the grace window for parallel requests
 
     replay = refresh(client, tokens["refresh_token"])  # someone is replaying a stolen, already-used token
     assert replay.status_code == 401 and replay.json()["error"]["code"] == "AUTH_INVALID_REFRESH_TOKEN"
     assert refresh(client, newer["refresh_token"]).status_code == 401  # the legitimate chain is revoked too
+
+
+def test_parallel_refreshes_with_one_token_keep_the_user_signed_in(client):
+    # The dashboard fires several requests at once; when the access token has expired, each one refreshes.
+    _, tokens = register_and_login(client)
+    first = refresh(client, tokens["refresh_token"])
+    second = refresh(client, tokens["refresh_token"])  # lost the race, moments later
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json()["refresh_token"] != second.json()["refresh_token"]
+    # Neither request's new session was revoked by the other.
+    assert refresh(client, first.json()["refresh_token"]).status_code == 200
+    assert refresh(client, second.json()["refresh_token"]).status_code == 200
+
+
+def test_a_logged_out_token_gets_no_grace(client):
+    _, tokens = register_and_login(client)
+    client.post(f"{API}/auth/logout", json={"refresh_token": tokens["refresh_token"]})
+    assert refresh(client, tokens["refresh_token"]).status_code == 401
+
+
+def test_no_grace_after_the_theft_alarm(client):
+    email, tokens = register_and_login(client)
+    newer = refresh(client, tokens["refresh_token"]).json()
+    age_rotations(email, 31)
+    refresh(client, newer["refresh_token"])  # rotated just now: inside the grace window
+    assert refresh(client, tokens["refresh_token"]).status_code == 401  # old replay: every session is revoked
+    # `newer` was rotated a moment ago, but the alarm revoked its replacement, so it gets no grace.
+    assert refresh(client, newer["refresh_token"]).status_code == 401
 
 
 def test_logout_revokes_the_refresh_token(client):

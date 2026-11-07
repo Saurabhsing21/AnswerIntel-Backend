@@ -16,4 +16,7 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when this token was rotated (not logged out): the token that replaced it. Lets a request that raced the
+    # rotation reuse this token for a few seconds instead of being treated as theft.
+    replaced_by_id: Mapped[int | None] = mapped_column(ForeignKey("refresh_tokens.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
