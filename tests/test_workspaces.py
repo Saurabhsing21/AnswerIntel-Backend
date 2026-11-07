@@ -55,6 +55,25 @@ def test_members_share_projects_and_strangers_do_not(client):
     assert client.get(f"{API}/projects/{project_id}", headers=member).status_code == 404  # access ends at once
 
 
+def test_only_owners_and_admins_delete_projects(client):
+    _, owner = account(client, "delowner")
+    member_email, member = account(client, "delmember")
+    admin_email, admin = account(client, "deladmin")
+    workspace_id = team(client, owner)
+    url = f"{API}/workspaces/{workspace_id}/members"
+    client.post(url, json={"email": member_email}, headers=owner)
+    client.post(url, json={"email": admin_email, "role": "admin"}, headers=owner)
+
+    first = client.post(f"{API}/projects", json={**PROJECT, "workspace_id": workspace_id}, headers=owner).json()["id"]
+    blocked = client.delete(f"{API}/projects/{first}", headers=member)
+    assert blocked.status_code == 403 and blocked.json()["error"]["code"] == "FORBIDDEN"
+    assert client.get(f"{API}/projects/{first}", headers=owner).status_code == 200  # still there
+    assert client.delete(f"{API}/projects/{first}", headers=admin).status_code == 200
+
+    second = client.post(f"{API}/projects", json={**PROJECT, "workspace_id": workspace_id}, headers=owner).json()["id"]
+    assert client.delete(f"{API}/projects/{second}", headers=owner).status_code == 200
+
+
 def test_cannot_create_a_project_in_someone_elses_workspace(client):
     _, owner = account(client, "wsowner")
     _, other = account(client, "wsother")

@@ -204,6 +204,11 @@ def delete_project(
                 status_code=404,
                 detail="Project not found",
             )
+        role = session.scalar(select(WorkspaceMember.role).where(
+            WorkspaceMember.workspace_id == project.workspace_id, WorkspaceMember.user_id == current_user.id
+        ))
+        if role not in ("owner", "admin"):  # deleting takes every scan, report and PDF with it
+            raise AppError(403, "FORBIDDEN", "Only workspace owners and admins can delete a project.")
 
         keys = session.scalars(
             select(ReportPdf.storage_key)
