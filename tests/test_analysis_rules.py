@@ -87,3 +87,42 @@ def test_llm_failure_falls_back_to_rules(monkeypatch):
     result = ResponseAnalysisService(use_llm=True).analyze("I'd recommend Acme for small teams.", CTX)
     assert result["method"] == "heuristic"
     assert result["recommendation"]["recommended"] is True
+
+
+def _capture_llm(monkeypatch, output):
+    sent = {}
+
+    def fake_complete_json(_model, _system, user, _schema):
+        sent["user"] = user
+        return output
+
+    monkeypatch.setattr(llm_module, "complete_json", fake_complete_json)
+    return sent
+
+
+def test_llm_prompt_lists_only_brands_found_in_the_answer(monkeypatch):
+    sent = _capture_llm(monkeypatch, AnalysisOutput(brands=[
+        BrandVerdict(name="HubSpot", mentioned=True, recommended=True, position=1, sentiment="positive"),
+    ]))
+    result = llm_module.analyze_with_llm("HubSpot is the best CRM for startups.", CTX)
+    brands_line = next(line for line in sent["user"].splitlines() if line.startswith("Brands:"))
+    assert brands_line == "Brands: HubSpot"
+    # The competitor that was left out of the prompt still gets a not-mentioned verdict.
+    attio = result["competitors"][2]
+    assert attio["mentioned"] is False and attio["recommended"] is False and attio["mention_count"] == 0
+    assert result["competitors"][1]["recommended"] is True
+
+
+def test_llm_prompt_includes_aliases_found_in_the_answer(monkeypatch):
+    ctx = AnalysisContext(brand_name="Acme", aliases=["Acme CRM", "Acme Cloud"], competitors=[], prompt="Best CRM?")
+    sent = _capture_llm(monkeypatch, AnalysisOutput(brands=[]))
+    llm_module.analyze_with_llm("Try Acme CRM today.", ctx)
+    assert "Brands: Acme, Acme CRM\n" in sent["user"]
+
+
+def test_llm_call_is_still_made_when_no_tracked_brand_appears(monkeypatch):
+    sent = _capture_llm(monkeypatch, AnalysisOutput(brands=[], other_brands=["Pipedrive", "Zoho"]))
+    result = llm_module.analyze_with_llm("Pipedrive and Zoho are good picks.", CTX)
+    assert "Brands: (none of the tracked brands appear)" in sent["user"]
+    assert result["other_brands"] == ["Pipedrive", "Zoho"]
+    assert result["brand"]["mentioned"] is False

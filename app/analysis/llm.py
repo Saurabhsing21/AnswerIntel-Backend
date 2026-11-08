@@ -43,9 +43,11 @@ covering exactly the listed brands in "brands"."""
 
 def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
     names = [context.brand_name, *[c["name"] for c in context.competitors]]
+    # Only brands that appear get a verdict (verdict() discards the rest), so asking about the others only costs output tokens.
+    present_names = [n for n in [context.brand_name, *context.aliases, *[c["name"] for c in context.competitors]] if name_pattern(n).search(text)]
     user = (
         f"Question: {context.prompt}\n"
-        f"Brands: {', '.join(names)}\n\n"
+        f"Brands: {', '.join(present_names) or '(none of the tracked brands appear)'}\n\n"
         f"Answer:\n{text[:12000]}"
     )
     output = complete_json(settings.analysis_model, SYSTEM, user, AnalysisOutput)
