@@ -27,10 +27,16 @@ def test_recommended_answers_need_no_diagnosis():
 
 
 def test_robots_block_is_reported_for_the_engine_crawler_only():
-    pages = {f"{SITE}/robots.txt": "User-agent: GPTBot\nDisallow: /\n"}
-    blocked = run(pages=pages, engine="chatgpt")
-    assert blocked["causes"][0]["code"] == "TECHNICAL" and blocked["causes"][0]["evidence"]["agent"] == "GPTBot"
+    pages = {f"{SITE}/robots.txt": "User-agent: OAI-SearchBot\nDisallow: /\n"}
+    for engine in ("chatgpt", "chatgpt_search"):
+        blocked = run(pages=pages, engine=engine)
+        assert blocked["causes"][0]["code"] == "TECHNICAL" and blocked["causes"][0]["evidence"]["agent"] == "OAI-SearchBot"
     assert "TECHNICAL" not in codes(run(pages=pages, engine="perplexity"))
+
+
+def test_blocking_gptbot_does_not_hide_the_brand_from_chatgpt_search():
+    pages = {f"{SITE}/robots.txt": "User-agent: GPTBot\nDisallow: /\n"}
+    assert "TECHNICAL" not in codes(run(pages=pages, engine="chatgpt_search"))
 
 
 def test_source_gap_lists_cited_pages_that_name_competitors_but_not_the_brand():
@@ -57,6 +63,37 @@ def test_no_answer_page_only_when_the_sitemap_has_nothing_on_the_question():
     covered = run(pages={sitemap: f"<loc>{SITE}/blog/crm-for-small-teams</loc>"})
     assert "NO_ANSWER_PAGE" not in codes(covered)
     assert "NO_ANSWER_PAGE" not in codes(run())  # no sitemap: no evidence, no claim
+
+
+def test_sitemap_index_is_followed_into_up_to_five_child_sitemaps():
+    index = f"{SITE}/sitemap.xml"
+    children = [f"{SITE}/sitemap-{n}.xml" for n in range(1, 7)]
+    pages = {index: "<sitemapindex>" + "".join(f"<sitemap><loc>{c}</loc></sitemap>" for c in children) + "</sitemapindex>"}
+    for n, child in enumerate(children, 1):
+        pages[child] = f"<urlset><url><loc>{SITE}/page-{n}</loc></url><url><loc>{SITE}/other-{n}</loc></url></urlset>"
+    pages[children[5]] = f"<urlset><url><loc>{SITE}/blog/crm-for-small-teams</loc></url></urlset>"  # sixth child is never read
+    cause = next(c for c in run(pages=pages)["causes"] if c["code"] == "NO_ANSWER_PAGE")
+    # 5 children x 2 pages: the 6 child-sitemap addresses are not counted as pages.
+    assert cause["evidence"]["pages_checked"] == 10
+    assert "None of the 10 page addresses in your sitemap matches this question" in cause["detail"]
+
+
+def test_page_found_in_a_child_sitemap_means_no_gap_and_a_dead_child_is_skipped():
+    index = f"{SITE}/sitemap.xml"
+    pages = {
+        index: f"<sitemapindex><sitemap><loc>{SITE}/gone.xml</loc></sitemap><sitemap><loc>{SITE}/posts.xml</loc></sitemap></sitemapindex>",
+        f"{SITE}/posts.xml": f"<urlset><url><loc>{SITE}/blog/crm-for-small-teams</loc></url></urlset>",
+    }
+    assert "NO_ANSWER_PAGE" not in codes(run(pages=pages))
+
+
+def test_sitemap_total_is_capped_at_200_addresses_across_children():
+    index = f"{SITE}/sitemap.xml"
+    pages = {index: f"<sitemapindex><sitemap><loc>{SITE}/a.xml</loc></sitemap><sitemap><loc>{SITE}/b.xml</loc></sitemap></sitemapindex>"}
+    for name in ("a", "b"):
+        pages[f"{SITE}/{name}.xml"] = "<urlset>" + "".join(f"<url><loc>{SITE}/{name}-{n}</loc></url>" for n in range(150)) + "</urlset>"
+    cause = next(c for c in run(pages=pages)["causes"] if c["code"] == "NO_ANSWER_PAGE")
+    assert cause["evidence"]["pages_checked"] == 200
 
 
 def test_winning_criteria_quote_the_answer_and_mentioned_brands_get_positioning_help():

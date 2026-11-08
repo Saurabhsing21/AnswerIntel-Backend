@@ -94,11 +94,36 @@ def test_healthy_site_has_no_findings():
     assert audit["findings"] == []
 
 
-def test_ai_crawlers_blocked_by_robots_is_a_high_impact_finding():
-    robots = "User-agent: GPTBot\nDisallow: /\n\nUser-agent: PerplexityBot\nDisallow: /\n\nUser-agent: *\nAllow: /"
+def test_blocked_search_crawlers_are_a_high_impact_finding():
+    robots = "User-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: PerplexityBot\nDisallow: /\n\nUser-agent: *\nAllow: /"
     audit = site_audit.audit_site("https://halden.co", fetch=fake_site(robots=robots))
     blocked = next(f for f in audit["findings"] if f["code"] == "ROBOTS_BLOCKS_AI")
-    assert blocked["impact"] == "high" and set(blocked["agents"]) == {"GPTBot", "PerplexityBot"}
+    assert blocked["impact"] == "high" and set(blocked["agents"]) == {"OAI-SearchBot", "PerplexityBot"}
+
+
+def test_blocking_only_training_crawlers_is_a_low_impact_note_and_no_gap():
+    robots = "User-agent: GPTBot\nDisallow: /\n\nUser-agent: CCBot\nDisallow: /\n\nUser-agent: ClaudeBot\nDisallow: /"
+    audit = site_audit.audit_site("https://halden.co", fetch=fake_site(robots=robots))
+    assert [f["code"] for f in audit["findings"]] == ["ROBOTS_BLOCKS_TRAINING"]
+    note = audit["findings"][0]
+    assert note["impact"] == "low" and "does not hide you from ChatGPT Search" in note["message"]
+    assert set(note["agents"]) == {"GPTBot", "CCBot", "ClaudeBot"}
+    assert "TECHNICAL_GAP" not in {o["type"] for o in detect([obs(1, "CATEGORY", True)], "Halden", {}, audit=audit)}
+
+
+def test_missing_llms_txt_is_a_low_tip_and_never_a_gap_on_its_own():
+    audit = site_audit.audit_site("https://halden.co", fetch=fake_site(llms=False))
+    assert [(f["code"], f["impact"]) for f in audit["findings"]] == [("NO_LLMS_TXT", "low")]
+    assert "TECHNICAL_GAP" not in {o["type"] for o in detect([obs(1, "CATEGORY", True)], "Halden", {}, audit=audit)}
+
+
+def test_tips_ride_along_in_the_gap_evidence_when_a_real_finding_exists():
+    robots = "User-agent: OAI-SearchBot\nDisallow: /\n\nUser-agent: GPTBot\nDisallow: /"
+    audit = site_audit.audit_site("https://halden.co", fetch=fake_site(robots=robots, llms=False))
+    gap = next(o for o in detect([obs(1, "CATEGORY", True)], "Halden", {}, audit=audit) if o["type"] == "TECHNICAL_GAP")
+    assert gap["impact"] == "high" and gap["title"] == "Your robots.txt blocks AI crawlers"
+    assert [f["code"] for f in gap["evidence"]["findings"]] == ["ROBOTS_BLOCKS_AI", "ROBOTS_BLOCKS_TRAINING", "NO_LLMS_TXT"]
+    assert all({"code", "impact", "message", "action"} <= set(f) for f in gap["evidence"]["findings"])
 
 
 def test_missing_llms_structured_data_and_thin_content_are_reported():
@@ -112,7 +137,7 @@ def test_unreachable_site_is_not_reported_as_a_technical_gap():
 
 
 def test_technical_gap_opportunity_comes_from_audit_findings():
-    robots = "User-agent: GPTBot\nDisallow: /"
+    robots = "User-agent: OAI-SearchBot\nDisallow: /"
     audit = site_audit.audit_site("https://halden.co", fetch=fake_site(robots=robots))
     found = {o["type"]: o for o in detect([obs(1, "CATEGORY", True)], "Halden", {}, audit=audit)}
     gap = found["TECHNICAL_GAP"]
@@ -121,7 +146,7 @@ def test_technical_gap_opportunity_comes_from_audit_findings():
 
 
 def test_scan_adds_technical_gap_and_detail_endpoint(client, monkeypatch):
-    robots = "User-agent: GPTBot\nDisallow: /"
+    robots = "User-agent: OAI-SearchBot\nDisallow: /"
     monkeypatch.setattr(site_audit, "safe_get", lambda url, **kw: fake_site(robots=robots)(url))
     headers = signup(client, "tech")
     project_id = make_project(client, headers)

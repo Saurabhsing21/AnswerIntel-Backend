@@ -51,7 +51,6 @@ TECHNICAL_TITLES = {
     "ROBOTS_BLOCKS_AI": "Your robots.txt blocks AI crawlers",
     "THIN_CONTENT": "Your homepage is hard for AI to read",
     "NO_STRUCTURED_DATA": "Your homepage has no structured data for AI",
-    "NO_LLMS_TXT": "Your site has no llms.txt for AI",
 }
 DISCOVERY_CATEGORIES = ("CATEGORY", "USE_CASE", "PROBLEM")
 BRANDED_CATEGORIES = ("COMPARISON", "COMPETITOR", "ALTERNATIVE")
@@ -388,7 +387,8 @@ def detect(
         })
 
     # TECHNICAL_GAP: AI crawlers cannot reach or read the website (PRD 10, type 6). Facts from the site audit.
-    if audit and audit["findings"]:
+    # Low-impact findings are tips (no llms.txt, training-only blocks): they ride along but never make a gap alone.
+    if audit and any(f["impact"] != "low" for f in audit["findings"]):
         order = {"high": 0, "medium": 1, "low": 2}
         findings = sorted(audit["findings"], key=lambda f: order[f["impact"]])
         found.append({

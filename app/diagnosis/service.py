@@ -16,9 +16,10 @@ from app.opportunities.site_audit import _visible_text
 Fetch = Callable[[str], tuple[int, str] | None]
 
 # The crawler each engine reads the web with.
-ENGINE_AGENTS = {"chatgpt": "GPTBot", "perplexity": "PerplexityBot", "gemini": "Google-Extended", "google": "Googlebot"}
+ENGINE_AGENTS = {"chatgpt": "OAI-SearchBot", "chatgpt_search": "OAI-SearchBot", "perplexity": "PerplexityBot", "gemini": "Google-Extended", "google": "Googlebot"}
 MAX_SOURCES = 6
 MAX_SITEMAP_URLS = 200
+MAX_CHILD_SITEMAPS = 5
 CACHE_SECONDS = 24 * 3600
 STOPWORDS = {
     "the", "a", "an", "and", "or", "for", "to", "of", "in", "on", "with", "best", "top", "what", "which", "how",
@@ -103,6 +104,22 @@ def source_gap(brand: str, competitors: list[str], citations: list[dict], fetch:
     }
 
 
+def _locs(xml: str) -> list[str]:
+    return re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", xml)
+
+
+def _sitemap_urls(xml: str, fetch: Fetch) -> list[str]:
+    """Page addresses from a sitemap; an index lists other sitemaps, so read a few of those instead of counting them."""
+    if "<sitemapindex" not in xml:
+        return _locs(xml)[:MAX_SITEMAP_URLS]
+    urls: list[str] = []
+    for child in _locs(xml)[:MAX_CHILD_SITEMAPS]:
+        got = fetch(child)
+        if got and got[0] == 200 and "<sitemapindex" not in got[1]:
+            urls += _locs(got[1])
+    return urls[:MAX_SITEMAP_URLS]
+
+
 def no_answer_page(website: str, prompt: str, citations: list[dict], fetch: Fetch) -> dict | None:
     """No page on the brand's site looks like it answers this question, judged from the sitemap URLs."""
     if any(c.get("is_brand_owned") for c in citations):
@@ -110,7 +127,7 @@ def no_answer_page(website: str, prompt: str, citations: list[dict], fetch: Fetc
     sitemap = fetch(f"{_origin(website)}/sitemap.xml")
     if not sitemap or sitemap[0] != 200:
         return None
-    urls = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", sitemap[1])[:MAX_SITEMAP_URLS]
+    urls = _sitemap_urls(sitemap[1], fetch)
     words = _keywords(prompt)
     if not urls or not words:
         return None
@@ -119,7 +136,7 @@ def no_answer_page(website: str, prompt: str, citations: list[dict], fetch: Fetc
     return {
         "code": "NO_ANSWER_PAGE",
         "title": "No page on your site answers this question",
-        "detail": f"None of the {len(urls)} pages in your sitemap is about this question, and the engine cited none of your pages.",
+        "detail": f"None of the {len(urls)} page addresses in your sitemap matches this question, and the engine cited none of your pages.",
         "action": "Publish a page that answers this exact question: a clear verdict near the top, a comparison table and sources.",
         "evidence": {"sitemap": f"{_origin(website)}/sitemap.xml", "pages_checked": len(urls), "keywords": sorted(words)},
     }

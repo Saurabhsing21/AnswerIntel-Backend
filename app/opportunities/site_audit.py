@@ -7,8 +7,10 @@ from urllib.robotparser import RobotFileParser
 
 from app.common.safe_http import safe_get
 
-AI_AGENTS = ("GPTBot", "ChatGPT-User", "PerplexityBot", "Google-Extended", "ClaudeBot", "CCBot")
-CORE_AGENTS = {"GPTBot", "PerplexityBot", "Google-Extended"}
+# Crawlers that fetch pages to answer questions: blocking one hides the site from that engine.
+SEARCH_AGENTS = ("OAI-SearchBot", "ChatGPT-User", "PerplexityBot", "Google-Extended")
+# Crawlers that only collect training data: blocking them does not hide the site from AI answers.
+TRAINING_AGENTS = ("GPTBot", "ClaudeBot", "CCBot")
 MIN_TEXT_CHARS = 300
 # Big homepages put JSON-LD late (one real site starts it at byte ~200,085), so read up to 2 MB.
 MAX_PAGE_BYTES = 2_000_000
@@ -36,14 +38,23 @@ def audit_site(url: str, fetch: Callable[[str], tuple[int, str] | None] | None =
     if robots and robots[0] == 200:
         parser = RobotFileParser()
         parser.parse(robots[1].splitlines())
-        blocked = [agent for agent in AI_AGENTS if not parser.can_fetch(agent, f"{origin}/")]
+        blocked = [agent for agent in SEARCH_AGENTS if not parser.can_fetch(agent, f"{origin}/")]
         if blocked:
             findings.append({
                 "code": "ROBOTS_BLOCKS_AI",
-                "impact": "high" if CORE_AGENTS & set(blocked) else "medium",
+                "impact": "high",
                 "agents": blocked,
-                "message": f"robots.txt blocks AI crawlers: {', '.join(blocked)}.",
+                "message": f"robots.txt blocks AI search crawlers: {', '.join(blocked)}.",
                 "action": f"Update robots.txt to allow {', '.join(blocked)} to read your public pages.",
+            })
+        training = [agent for agent in TRAINING_AGENTS if not parser.can_fetch(agent, f"{origin}/")]
+        if training:
+            findings.append({
+                "code": "ROBOTS_BLOCKS_TRAINING",
+                "impact": "low",
+                "agents": training,
+                "message": f"robots.txt blocks AI training crawlers ({', '.join(training)}); this does not hide you from ChatGPT Search.",
+                "action": "Nothing to fix unless you want those models to learn from your site: then allow them in robots.txt.",
             })
 
     llms = fetch(f"{origin}/llms.txt")
