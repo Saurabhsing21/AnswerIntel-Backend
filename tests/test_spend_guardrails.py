@@ -174,23 +174,29 @@ def test_free_check_spend_cannot_block_a_paid_scan(client, monkeypatch):
 def test_global_budget_grows_with_paid_subscriptions(monkeypatch):
     monkeypatch.setattr(settings, "daily_ai_budget_usd", 10.0)
     monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0.1)
-    monkeypatch.setattr(settings, "workspace_cost_cap_ratio", 0.6)
+    monkeypatch.setattr(settings, "workspace_cost_cap_ratio", 0.5)
+    monkeypatch.setattr(settings, "workspace_cost_cap_ratio_yearly", 0.6)
     with SessionLocal() as session:
         before = costs.global_daily_budget(session)
     subscribed_workspace("starter", "year")  # pays $16 a month: cap $9.60
-    subscribed_workspace("pro", status="past_due")  # still counts while payment is retried: cap $60
+    subscribed_workspace("pro", status="past_due")  # still counts while payment is retried: cap $50
     for plan, status in (("growth", "canceled"), ("free", "active"), ("trial", "trialing")):
         subscribed_workspace(plan, status=status)  # not paying: adds nothing
     with SessionLocal() as session:
-        assert costs.global_daily_budget(session) - before == Decimal("0.1") * (Decimal("9.6") + Decimal("60"))
+        assert costs.global_daily_budget(session) - before == Decimal("0.1") * (Decimal("9.6") + Decimal("50"))
 
 
-def test_yearly_starter_cap_uses_what_it_pays_a_month(monkeypatch):
-    monkeypatch.setattr(settings, "workspace_cost_cap_ratio", 0.6)
+def test_a_cap_is_half_a_monthly_price_and_60_percent_of_a_yearly_one(monkeypatch):
+    monkeypatch.setattr(settings, "workspace_cost_cap_ratio", 0.5)
+    monkeypatch.setattr(settings, "workspace_cost_cap_ratio_yearly", 0.6)
     yearly, monthly = subscribed_workspace("starter", "year"), subscribed_workspace("starter")
     with SessionLocal() as session:
         assert costs.workspace_cap(session, yearly) == Decimal("9.6")  # $192 / 12 = $16, x 0.6
-        assert costs.workspace_cap(session, monthly) == Decimal("12")  # $20 x 0.6
+        assert costs.workspace_cap(session, monthly) == Decimal("10")  # $20 x 0.5
+
+
+def test_default_caps_follow_the_cost_rule():
+    assert (settings.workspace_cost_cap_ratio, settings.workspace_cost_cap_ratio_yearly) == (0.5, 0.6)
 
 
 def test_spend_past_70_percent_of_the_budget_logs_once_a_day(monkeypatch, caplog):

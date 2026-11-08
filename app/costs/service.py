@@ -132,12 +132,18 @@ def paid_per_month(plan_key: str, interval: str | None) -> Decimal:
     return Decimal(plan.price_yearly) / 12 if interval == "year" else Decimal(plan.price_monthly)
 
 
+def paid_cap(plan_key: str, interval: str | None) -> Decimal:
+    """A subscription's monthly AI spend cap: the cost rule allows 50% of a monthly price, 60% of a yearly one."""
+    ratio = settings.workspace_cost_cap_ratio_yearly if interval == "year" else settings.workspace_cost_cap_ratio
+    return paid_per_month(plan_key, interval) * Decimal(str(ratio))
+
+
 def workspace_cap(session, workspace_id: UUID) -> Decimal:
     sub = session.scalar(select(Subscription).where(Subscription.workspace_id == workspace_id))
-    price = paid_per_month(sub.plan, sub.interval) if sub else Decimal(0)
-    if price == 0:
+    cap = paid_cap(sub.plan, sub.interval) if sub else Decimal(0)
+    if cap == 0:
         return Decimal(str(settings.free_workspace_cost_cap_usd))
-    return price * Decimal(str(settings.workspace_cost_cap_ratio))
+    return cap
 
 
 def global_daily_budget(session) -> Decimal:
@@ -146,7 +152,7 @@ def global_daily_budget(session) -> Decimal:
     rows = session.execute(
         select(Subscription.plan, Subscription.interval).where(Subscription.plan.in_(paid), Subscription.status.in_(("active", "past_due")))
     ).all()
-    caps = sum((paid_per_month(plan, interval) for plan, interval in rows), Decimal(0)) * Decimal(str(settings.workspace_cost_cap_ratio))
+    caps = sum((paid_cap(plan, interval) for plan, interval in rows), Decimal(0))
     return Decimal(str(settings.daily_ai_budget_usd)) + Decimal(str(settings.daily_budget_share_of_paid_cap)) * caps
 
 

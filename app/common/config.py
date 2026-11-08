@@ -32,11 +32,13 @@ class Settings(BaseSettings):
 
     # Spend guardrails. Daily budget: all AI spend per UTC day except the free check's (0 = no limit). It grows with
     # paying users: this flat amount plus daily_budget_share_of_paid_cap x the sum of every paying workspace's cap.
-    # Workspace cap: this share of what the workspace pays a month (a yearly price over 12); plans priced at 0 use the
-    # flat dollar cap. The free check has its own daily budget, so anonymous traffic can never pause paid scans.
+    # Workspace cap: this share of what the workspace pays a month (a yearly price over 12): 50% on monthly plans, 60%
+    # on yearly ones (the cost rule); plans priced at 0 use the flat dollar cap. The free check has its own daily
+    # budget, so anonymous traffic can never pause paid scans.
     daily_ai_budget_usd: float = 10.0
     daily_budget_share_of_paid_cap: float = 0.1
-    workspace_cost_cap_ratio: float = 0.6
+    workspace_cost_cap_ratio: float = 0.5
+    workspace_cost_cap_ratio_yearly: float = 0.6
     free_workspace_cost_cap_usd: float = 1.0
     free_check_daily_budget_usd: float = 5.0  # 0 = no limit
 
