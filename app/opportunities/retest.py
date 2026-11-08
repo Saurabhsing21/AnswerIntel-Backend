@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.analysis.models import Mention
+from app.metrics.stats import significant
 from app.metrics.models import MetricSnapshot
 from app.opportunities.models import Opportunity
 from app.prompts.models import ScanPrompt
@@ -29,6 +30,16 @@ def latest_full_scan(session: Session, project_id) -> int | None:
     return session.scalar(select(func.max(MetricSnapshot.scan_id)).where(MetricSnapshot.project_id == project_id))
 
 
+def verdict(before: dict | None, after: dict) -> str:
+    """"better" or "worse" only when the mention rate moved by more than sampling noise; otherwise "too_early"."""
+    if not before or not before["answers"] or not after["answers"]:
+        return "too_early"
+    old, new = before["mentioned"] / before["answers"], after["mentioned"] / after["answers"]
+    if significant(old, before["answers"], new, after["answers"]):
+        return "better" if new > old else "worse"
+    return "too_early"
+
+
 def finish_retest(session: Session, scan: Scan) -> None:
     """Stores the re-test's result on its opportunity, next to the "before" taken when it started."""
     opportunity = session.get(Opportunity, scan.opportunity_id) if scan.opportunity_id else None
@@ -36,9 +47,13 @@ def finish_retest(session: Session, scan: Scan) -> None:
         return
     texts = list(session.scalars(select(ScanPrompt.text).where(ScanPrompt.scan_id == scan.id)))
     retest = dict(opportunity.evidence.get("retest") or {})
+    after = results_for(session, scan.id, texts)
     retest.update({
         "status": "done" if scan.completed_runs else "failed",
-        "after": results_for(session, scan.id, texts),
+        "after": after,
+        "verdict": verdict(retest.get("before"), after),
         "completed_at": datetime.now(timezone.utc).isoformat(),
     })
+    if retest["verdict"] == "better":
+        opportunity.status = "completed"
     opportunity.evidence = {**opportunity.evidence, "retest": retest}  # a new dict, so the JSON column is saved

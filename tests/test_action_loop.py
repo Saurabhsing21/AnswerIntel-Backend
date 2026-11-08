@@ -2,6 +2,7 @@
 
 from app.metrics.service import Observation
 from app.opportunities.service import detect
+from app.providers.response_model import AIResponseRecord
 from app.scans.models import Scan
 from app.common.database import SessionLocal
 from tests.conftest import API, make_project, signup
@@ -87,7 +88,11 @@ def test_old_format_fingerprints_rebaseline_instead_of_reporting_everything_fixe
     assert all(o["scan_id"] != first_scan["id"] for o in after)
 
 
-def test_retest_asks_only_that_opportunitys_prompts_and_reports_before_and_after(client):
+def test_retest_asks_each_prompt_three_times_and_does_not_close_the_fix(client):
+    from sqlalchemy import func, select
+
+    from app.prompts.models import ScanPrompt
+
     headers = signup(client, "retest")
     project_id = make_project(client, headers)
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
@@ -95,15 +100,93 @@ def test_retest_asks_only_that_opportunitys_prompts_and_reports_before_and_after
     target = next(o for o in opportunities(client, headers, project_id) if o["related_prompts"])
 
     started = client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/retest", headers=headers).json()
-    assert started["status"] == "completed" and started["retest"]["before"]["scan_id"] == full["id"]
-    done = client.get(f"{API}/projects/{project_id}/opportunities/{target['id']}", headers=headers).json()["retest"]
-    assert done["status"] == "done" and done["after"]["answers"] > 0
-    assert done["after"]["answers"] <= done["before"]["answers"]  # only this opportunity's prompts were asked
+    assert started["status"] == target["status"] != "completed"  # starting a re-test proves nothing yet
+    assert started["retest"]["before"]["scan_id"] == full["id"]
+    done = client.get(f"{API}/projects/{project_id}/opportunities/{target['id']}", headers=headers).json()
+    assert done["retest"]["status"] == "done" and done["retest"]["verdict"] in ("better", "worse", "too_early")
+    assert (done["status"] == "completed") == (done["retest"]["verdict"] == "better")
 
     scans = client.get(f"{API}/projects/{project_id}/scans", headers=headers).json()
-    assert scans[0]["kind"] == "retest" and scans[0]["total_runs"] < scans[1]["total_runs"]
+    assert scans[0]["kind"] == "retest"
+    with SessionLocal() as s:
+        per_prompt = s.execute(
+            select(ScanPrompt.text, func.count()).where(ScanPrompt.scan_id == scans[0]["id"]).group_by(ScanPrompt.text)
+        ).all()
+        answers = s.scalar(select(func.count()).select_from(AIResponseRecord).where(AIResponseRecord.scan_id == scans[0]["id"]))
+    assert per_prompt and {n for _, n in per_prompt} == {3}  # every prompt is stored three times
+    assert answers == scans[0]["total_runs"] == done["retest"]["after"]["answers"]  # and every repeat is asked and counted
+    assert done["retest"]["after"]["answers"] % 3 == 0
     dashboard = client.get(f"{API}/projects/{project_id}/dashboard", headers=headers).json()
     assert dashboard["latest_scan"]["id"] == full["id"]  # a re-test never becomes the dashboard's scan
+
+
+def test_retest_is_charged_and_checked_for_all_three_asks(client):
+    from datetime import datetime, timedelta, timezone
+    from decimal import Decimal
+
+    from sqlalchemy import update
+
+    from app.billing.plans import PLANS
+    from app.billing.service import credits_used
+    from app.opportunities.models import Opportunity
+    from app.projects.models import Project
+
+    headers = signup(client, "retestcredits")
+    project_id = make_project(client, headers)
+    client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt_search"]}, headers=headers)
+    question = "best crm for startups"
+    client.post(f"{API}/projects/{project_id}/prompts", json={"text": question, "category": "CATEGORY", "intent": "DISCOVERY"}, headers=headers)
+    full = scan_and_wait(client, headers, project_id)
+    with SessionLocal() as s:
+        project = s.get(Project, project_id)
+        opportunity = Opportunity(project_id=project.id, scan_id=full["id"], type="COMPETITOR_GAP", title="t", description="d",
+                                  recommended_action="a", impact="HIGH", confidence=0.8, evidence={"prompts": [question]})
+        s.add(opportunity)
+        s.flush()
+        old = Scan(project_id=project.id, status="completed", total_runs=1, created_at=datetime.now(timezone.utc) - timedelta(days=3),
+                   credits=Decimal(PLANS["pro"].credits_per_month) - Decimal(str(credits_used(s, project.workspace_id))) - Decimal("2.5"))
+        s.add(old)
+        s.commit()
+        opportunity_id, old_id = opportunity.id, old.id
+
+    url = f"{API}/projects/{project_id}/opportunities/{opportunity_id}/retest"
+    blocked = client.post(url, headers=headers)  # 2.5 credits left: one ask fits, three do not
+    assert blocked.status_code == 402 and blocked.json()["error"]["code"] == "PLAN_LIMIT"
+    assert blocked.json()["error"]["message"].startswith("This scan needs 3 credits and 2.5 are left")
+
+    with SessionLocal() as s:
+        s.execute(update(Scan).where(Scan.id == old_id).values(credits=Scan.credits - Decimal("0.5")))
+        s.commit()
+    allowed = client.post(url, headers=headers)
+    assert allowed.status_code == 200
+    with SessionLocal() as s:
+        retest_scan = s.get(Scan, allowed.json()["retest"]["scan_id"])
+        assert (retest_scan.total_runs, retest_scan.credits) == (3, 3)
+
+
+def test_only_a_better_verdict_marks_the_fix_completed(client, monkeypatch):
+    headers = signup(client, "retestverdict")
+    project_id = make_project(client, headers)
+    client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
+    scan_and_wait(client, headers, project_id)
+    targets = [o for o in opportunities(client, headers, project_id) if o["related_prompts"]][:2]
+    for target, result in zip(targets, ("worse", "better")):
+        monkeypatch.setattr("app.opportunities.retest.verdict", lambda before, after, result=result: result)
+        client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/retest", headers=headers)
+        after = client.get(f"{API}/projects/{project_id}/opportunities/{target['id']}", headers=headers).json()
+        assert after["retest"]["verdict"] == result
+        assert after["status"] == ("completed" if result == "better" else target["status"])
+
+
+def test_retest_verdict_needs_a_change_bigger_than_noise():
+    from app.opportunities.retest import verdict
+
+    counts = lambda answers, mentioned: {"answers": answers, "mentioned": mentioned}  # noqa: E731
+    assert verdict(counts(10, 1), counts(30, 24)) == "better"  # 10% -> 80%
+    assert verdict(counts(10, 8), counts(30, 3)) == "worse"  # 80% -> 10%
+    assert verdict(counts(10, 4), counts(30, 14)) == "too_early"  # 40% -> 47%: noise
+    assert verdict(None, counts(30, 20)) == "too_early"  # no full scan to compare with
+    assert verdict(counts(0, 0), counts(30, 20)) == "too_early" and verdict(counts(10, 2), counts(0, 0)) == "too_early"
 
 
 def test_track_as_experiment_freezes_a_baseline_once(client):

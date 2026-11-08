@@ -16,6 +16,8 @@ from app.providers.registry import ModelRegistry
 from app.scans.execution import ScanExecutionService
 from app.scans.models import ACTIVE_STATUSES, Scan
 
+RETEST_ASKS = 3  # one answer is a coin flip; three per question per engine make a before/after worth trusting
+
 
 class ScanService:
     def __init__(
@@ -53,7 +55,8 @@ class ScanService:
             raise AppError(409, "NO_ACTIVE_PROMPTS", "Generate or add prompts before starting a scan.")
         # The monthly credit cap is what bounds model cost: refuse a scan that would go over it.
         engines = engines_for(self.model_registry.for_project(project.engines), ent)
-        needed = _credits(engines, active_choices)
+        asks = RETEST_ASKS if prompt_ids else 1
+        needed = _credits(engines, active_choices) * asks
         left = max(0.0, ent.credits_per_month - credits_used(session, project.workspace_id))
         if needed > left:
             raise AppError(
@@ -66,7 +69,7 @@ class ScanService:
         scan = Scan(project_id=project.id, status="queued", kind="retest" if prompt_ids else "full", opportunity_id=opportunity_id)
         session.add(scan)
         session.flush()
-        snapshots = self.prompt_discovery.snapshot_for_scan(session, project, scan.id, prompt_ids)
+        snapshots = self.prompt_discovery.snapshot_for_scan(session, project, scan.id, prompt_ids, asks)
         scan.total_runs = sum(len(engines_for_prompt(engines, sp.engines)) for sp in snapshots)
         scan.credits = _credits(engines, [sp.engines for sp in snapshots])  # fixed now; what the 30-day cap counts
         return scan

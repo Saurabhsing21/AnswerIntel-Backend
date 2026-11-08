@@ -145,15 +145,16 @@ class PromptDiscoveryService:
         session.flush()
         return created
 
-    def snapshot_for_scan(self, session: Session, project: Project, scan_id: int, prompt_ids: list[int] | None = None) -> list[ScanPrompt]:
-        """Freezes the active prompts (or just `prompt_ids`, for a re-test) into the scan so history stays immutable."""
+    def snapshot_for_scan(self, session: Session, project: Project, scan_id: int, prompt_ids: list[int] | None = None, asks: int = 1) -> list[ScanPrompt]:
+        """Freezes the active prompts (or just `prompt_ids`, for a re-test) into the scan so history stays immutable.
+        With `asks` above 1 each prompt is frozen that many times, so each repeat gets its own answer."""
         chosen = Prompt.id.in_(prompt_ids) if prompt_ids else Prompt.is_active
         prompts = session.scalars(
             select(Prompt).where(Prompt.project_id == project.id, chosen).order_by(Prompt.id)
         ).all()
         snapshots = [
-            ScanPrompt(scan_id=scan_id, prompt_id=p.id, text=p.text, category=p.category, intent=p.intent, engines=p.engines)
-            for p in prompts
+            ScanPrompt(scan_id=scan_id, prompt_id=p.id, text=p.text, category=p.category, intent=p.intent, engines=p.engines, ask_number=n)
+            for p in prompts for n in range(1, asks + 1)
         ]
         session.add_all(snapshots)
         session.flush()

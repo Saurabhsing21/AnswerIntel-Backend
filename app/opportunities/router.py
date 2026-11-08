@@ -163,7 +163,8 @@ def track_as_experiment(project_id: UUID, opportunity_id: int, current_user: Use
 def retest(
     project_id: UUID, opportunity_id: int, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user)
 ):
-    """Ask just this opportunity's prompts again now, and compare with the last full scan."""
+    """Ask just this opportunity's prompts again now (three times each), and compare with the last full scan.
+    The fix is only marked completed if the result shows it worked."""
     with SessionLocal() as session:
         project = get_owned_project(session, project_id, current_user.id)
         require_pro(entitlements(session, project.workspace_id), "Re-tests")
@@ -181,7 +182,6 @@ def retest(
             "status": "running", "scan_id": scan.id, "prompts": len(prompt_ids),
             "before": results_for(session, before_scan, texts) if before_scan else None,
         }}
-        opportunity.status = "completed"
         session.commit()
         session.refresh(opportunity)
         enqueue_scan(scan.id, background_tasks)

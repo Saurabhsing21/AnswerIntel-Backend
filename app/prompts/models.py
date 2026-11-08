@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -55,12 +55,15 @@ class ScanPrompt(Base):
     category: Mapped[str] = mapped_column(String(50), nullable=False)
     intent: Mapped[str] = mapped_column(String(100), nullable=False)
     engines: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # the prompt's choice when the scan started
+    # 1 for every ask in a full scan; a re-test snapshots each prompt several times so each repeat gets its own answer.
+    ask_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         UniqueConstraint(
             "scan_id",
             "text",
+            "ask_number",
             name="uq_scan_prompt_text",
         ),
     )
