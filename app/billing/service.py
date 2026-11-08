@@ -42,13 +42,13 @@ def scans_today(session: Session, workspace_id: UUID, now: datetime | None = Non
     ) or 0
 
 
-def answers_used(session: Session, workspace_id: UUID, now: datetime | None = None) -> int:
-    """AI answers (prompt x engine) the workspace's scans asked for in the last 30 days."""
+def credits_used(session: Session, workspace_id: UUID, now: datetime | None = None) -> float:
+    """Credits the workspace's scans were charged in the last 30 days."""
     since = (now or datetime.now(timezone.utc)) - timedelta(days=30)
-    return session.scalar(
-        select(func.coalesce(func.sum(Scan.total_runs), 0)).join(Project, Project.id == Scan.project_id)
+    return float(session.scalar(
+        select(func.coalesce(func.sum(Scan.credits), 0)).join(Project, Project.id == Scan.project_id)
         .where(Project.workspace_id == workspace_id, Scan.created_at >= since)
-    ) or 0
+    ) or 0)
 
 
 def active_prompts(session: Session, workspace_id: UUID) -> int:
@@ -97,7 +97,7 @@ def usage(session: Session, workspace_id: UUID) -> dict:
         "scans_today": scans_today(session, workspace_id),
         "scans_30_days": scans_today(session, workspace_id, days=30),
         "scans_total": scans_ever(session, workspace_id),
-        "answers_30_days": answers_used(session, workspace_id),
+        "credits_30_days": credits_used(session, workspace_id),
         "active_prompts": active_prompts(session, workspace_id),
         "per_project": [
             {"id": str(pid), "brand_name": name, "active_prompts": p, "competitors": c} for pid, name, p, c in rows

@@ -4,8 +4,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.providers.models import engines_for_prompt
-from app.billing.plans import engines_for, entitlements, require_active, require_room
-from app.billing.service import answers_used, scans_ever, scans_today
+from app.billing.plans import credits_for, engines_for, entitlements, require_active, require_room
+from app.billing.service import credits_used, scans_ever, scans_today
 from app.common.config import settings
 from app.common.errors import AppError
 from app.projects.models import Project
@@ -51,16 +51,16 @@ class ScanService:
         active_choices = session.scalars(select(Prompt.engines).where(Prompt.project_id == project.id, chosen)).all()
         if not active_choices:
             raise AppError(409, "NO_ACTIVE_PROMPTS", "Generate or add prompts before starting a scan.")
-        # The monthly answer cap is what bounds model cost: refuse a scan that would go over it.
+        # The monthly credit cap is what bounds model cost: refuse a scan that would go over it.
         engines = engines_for(self.model_registry.for_project(project.engines), ent)
-        needed = sum(len(engines_for_prompt(engines, choice)) for choice in active_choices)
-        left = max(0, ent.answers_per_month - answers_used(session, project.workspace_id))
+        needed = _credits(engines, active_choices)
+        left = max(0.0, ent.credits_per_month - credits_used(session, project.workspace_id))
         if needed > left:
             raise AppError(
                 402, "PLAN_LIMIT",
-                f"This scan needs {needed} AI answers and {left} are left of your {ent.answers_per_month} for the last "
+                f"This scan needs {needed:g} credits and {left:g} are left of your {ent.credits_per_month} for the last "
                 "30 days. Switch off some prompts or wait for older scans to roll off.",
-                limit="answers_per_month",
+                limit="credits_per_month",
             )
 
         scan = Scan(project_id=project.id, status="queued", kind="retest" if prompt_ids else "full", opportunity_id=opportunity_id)
@@ -68,7 +68,13 @@ class ScanService:
         session.flush()
         snapshots = self.prompt_discovery.snapshot_for_scan(session, project, scan.id, prompt_ids)
         scan.total_runs = sum(len(engines_for_prompt(engines, sp.engines)) for sp in snapshots)
+        scan.credits = _credits(engines, [sp.engines for sp in snapshots])  # fixed now; what the 30-day cap counts
         return scan
 
     def run(self, scan_id: int) -> None:
         ScanExecutionService(provider=self.provider, model_registry=self.model_registry).run(scan_id)
+
+
+def _credits(engines: list, choices: list) -> float:
+    """Credits a scan costs: each prompt's engines, at each engine's weight."""
+    return sum(credits_for(e.key) for choice in choices for e in engines_for_prompt(engines, choice))

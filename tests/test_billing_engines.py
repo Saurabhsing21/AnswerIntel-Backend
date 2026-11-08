@@ -29,8 +29,9 @@ def test_each_plan_allows_its_engines_and_locks_the_rest_of_the_catalog(plan, al
 
 
 def test_locked_engines_name_the_cheapest_plan_that_unlocks_them():
-    assert ent("free").engine_upgrades == {"perplexity": "starter", "claude": "growth", "gemini": "pro"}
-    assert ent("starter").engine_upgrades == {"claude": "growth", "gemini": "pro"}
+    pro_only = {"gemini": "pro", "deepseek": "pro", "llama": "pro", "mistral": "pro"}
+    assert ent("free").engine_upgrades == {"perplexity": "starter", "claude": "growth", **pro_only}
+    assert ent("starter").engine_upgrades == {"claude": "growth", **pro_only}
     assert ent("pro").engine_upgrades == {}
 
 
@@ -46,5 +47,5 @@ def test_engine_choice_error_names_the_plan():
         check_engine_choice(ent("starter"), ["claude"])
     assert err.value.message == "Claude is on the Growth plan." and err.value.limit == "engines"
     with pytest.raises(AppError) as err:
-        check_engine_choice(ent("pro"), ["llama"])
-    assert err.value.message == "Llama is not included in any plan."
+        check_engine_choice(ent("pro"), ["grok"])
+    assert err.value.message == "Grok is not included in any plan."

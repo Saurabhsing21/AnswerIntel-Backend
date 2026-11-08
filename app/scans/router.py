@@ -38,6 +38,7 @@ def serialize(scan: Scan) -> dict:
         "opportunity_id": scan.opportunity_id,
         "provider": scan.provider,
         "total_runs": scan.total_runs,
+        "credits": float(scan.credits),
         "completed_runs": scan.completed_runs,
         "failed_runs": scan.failed_runs,
         "progress": round(done / scan.total_runs, 4) if scan.total_runs else 0,

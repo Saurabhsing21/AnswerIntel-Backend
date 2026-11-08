@@ -14,7 +14,7 @@ class ModelConfig:
 
 
 # Every engine a project can scan, in the order the app shows them. Small models on purpose: each plan's monthly
-# answer cap is priced for them (app/billing/plans.py). ENGINE_MODELS in the environment can swap a model.
+# credit cap is priced for them (app/billing/plans.py). ENGINE_MODELS in the environment can swap a model.
 CATALOG = (
     ModelConfig("chatgpt", "openai/gpt-5.4-nano", "ChatGPT"),
     ModelConfig("chatgpt_search", "openai/gpt-5.4-nano", "ChatGPT Search", web_search=True),
