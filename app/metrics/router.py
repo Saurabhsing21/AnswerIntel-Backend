@@ -123,7 +123,7 @@ def build_dashboard(session, project) -> dict:
     current = session.scalars(select(Opportunity).where(Opportunity.scan_id == scan.id)).all()
     plan = weekly_plan(current)
     opportunities = sorted(
-        [o for o in current if o.status in ("open", "in_progress") and o.trend != "resolved"],
+        [o for o in current if o.status in ("open", "in_progress") and o.trend not in ("resolved", "improving")],
         key=lambda o: rank(o.impact, o.evidence, o.confidence),
     )[:5]
 

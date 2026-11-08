@@ -53,12 +53,14 @@ def test_a_gap_that_disappears_twice_is_reported_as_resolved(client):
         service.detect = lambda *a, **k: [dict(x, evidence=dict(x["evidence"])) for x in first[1:]]
         scan_and_wait(client, headers, project_id)
         once = opportunities(client, headers, project_id)
+        top = client.get(f"{API}/projects/{project_id}/dashboard", headers=headers).json()["top_opportunities"]
         scan_and_wait(client, headers, project_id)
     finally:
         service.detect = real
     # Missing from one scan is not proof of a fix: it is improving, and keeps its status.
     assert [(o["title"], o["status"]) for o in once if o["trend"] in ("improving", "resolved")] == [(first[0]["title"], "open")]
     assert next(o for o in once if o["title"] == first[0]["title"])["trend"] == "improving"
+    assert top and all(o["trend"] != "improving" for o in top)  # not in this scan, so not a top gap of it
     after = opportunities(client, headers, project_id)
     resolved = [o for o in after if o["trend"] == "resolved"]
     assert [o["title"] for o in resolved] == [first[0]["title"]] and resolved[0]["status"] == "completed"

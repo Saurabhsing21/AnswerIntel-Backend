@@ -138,11 +138,14 @@ def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_l
             for cid, v in o.competitors.items():
                 if not v.get("recommended") or cid not in competitors:
                     continue
-                w = winners.setdefault(cid, {"name": competitors[cid], "engines": 0, "reasons": Counter(), "quote": None})
+                w = winners.setdefault(cid, {"name": competitors[cid], "engines": 0, "reasons": Counter(), "quotes": {}, "quote": None})
                 w["engines"] += 1
-                if (v.get("reason") or "").strip():
-                    w["reasons"][v["reason"].strip().rstrip(".")] += 1
-                w["quote"] = w["quote"] or ((v.get("evidence") or "").strip() or None)
+                reason, quote = (v.get("reason") or "").strip().rstrip("."), (v.get("evidence") or "").strip() or None
+                if reason:
+                    w["reasons"][reason] += 1
+                    if quote:  # a reason is only ever shown with a quote from the same answer
+                        w["quotes"].setdefault(reason, quote)
+                w["quote"] = w["quote"] or quote
         value = (importance or {}).get(answers[0].prompt_id)
         out.append({
             "text": answers[0].prompt_text,
@@ -152,9 +155,10 @@ def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_l
             "engines_lost": len(lost_answers),
             "engines_total": len(answers),
             "winners": [
-                {"name": w["name"], "engines": w["engines"],
-                 "reason": w["reasons"].most_common(1)[0][0] if w["reasons"] else None, "quote": w["quote"]}
+                {"name": w["name"], "engines": w["engines"], "reason": reason,
+                 "quote": w["quotes"].get(reason) if reason else w["quote"]}
                 for w in sorted(winners.values(), key=lambda w: (-w["engines"], w["name"]))
+                for reason in [w["reasons"].most_common(1)[0][0] if w["reasons"] else None]
             ],
             "cited_domains": [d for d, _ in domains.most_common(5)],
             # Every page AI read for these answers except your own, competitors' included: the steps depend on it.
@@ -319,7 +323,10 @@ def _plural(n: int, word: str) -> str:
 def switching(observations: list[Observation], brand: str, competitors: dict[int, str]) -> list[dict]:
     """'Alternatives to {brand}' answers: where your customers would switch. Evidence, never a loss."""
     rows = [o for o in observations if unwinnable(o, brand)]
-    return _question_rows(rows, competitors, lost=lambda o: any(v.get("recommended") for v in o.competitors.values()))
+    questions = _question_rows(rows, competitors, lost=lambda o: any(v.get("recommended") for v in o.competitors.values()))
+    for q in questions:  # not a loss, so no "lost in N scans" line
+        del q["scans_lost"], q["scans_seen"]
+    return questions
 
 
 def detect(

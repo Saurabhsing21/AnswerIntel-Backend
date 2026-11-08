@@ -69,6 +69,7 @@ def test_alternatives_to_the_brand_is_never_a_loss_but_is_kept_as_switching_evid
     switch = status_summary(groww_scan(), "Groww", COMPETITORS)["switching"]
     assert [q["text"] for q in switch] == [ALTERNATIVES_Q]
     assert {w["name"] for w in switch[0]["winners"]} == {"Zerodha", "Upstox", "Angel One"}
+    assert "scans_lost" not in switch[0] and "scans_seen" not in switch[0]  # evidence, so no "Lost in 1 of 1 scan"
 
 
 def test_losses_are_grouped_by_question_type_with_every_winner_listed():
@@ -228,3 +229,12 @@ def test_a_category_that_flips_between_gap_types_stays_the_same_opportunity(clie
         assert len(rows) == 1 and rows[0]["trend"] != "resolved" and rows[0]["trend"] != "new"
         assert rows[0]["status"] == "in_progress" and rows[0]["first_seen_scan_id"] == first[0]["scan_id"]
     assert after[0]["type"] == "CONTENT_GAP" and back[0]["type"] == "COMPETITOR_GAP"
+
+
+def test_a_reason_is_shown_only_with_a_quote_from_the_same_answer():
+    comps = {"chatgpt": {1: rec("low brokerage")}, "gemini": {1: rec("fast app", "Zerodha's app is fast.")},
+             "perplexity": {1: rec("low brokerage")}}
+    rows = [answer(n, engine, 1, BEGINNER_Q, "CATEGORY", False, comps[engine]) for n, engine in enumerate(ENGINES, 1)]
+    winner = service._question_rows(rows, COMPETITORS)[0]["winners"][0]
+    assert (winner["reason"], winner["quote"]) == ("low brokerage", None)  # the quote was about another reason
+    assert _why(service._question_rows(rows, COMPETITORS), "Groww")[0] == "AI picked Zerodha in 3 answers (summary: low brokerage)."

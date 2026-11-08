@@ -277,6 +277,8 @@ def recover_interrupted_scans() -> int:
             scan.completed_at = datetime.now(timezone.utc)
             try:
                 finish_partial_results(session, scan)
+                if scan.kind == "retest":  # else its opportunity says "running" and the page polls forever
+                    finish_retest(session, scan)
             except Exception:  # recovery must never stop the app from starting
                 log.exception("Could not build results for interrupted scan %s", scan.id)
             finalize_scan_cost(session, scan)

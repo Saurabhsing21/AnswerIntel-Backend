@@ -35,3 +35,28 @@ def test_an_interrupted_scan_still_gets_its_dashboard_and_report(client):
     assert client.get(f"{API}/projects/{project_id}/dashboard", headers=headers).json()["has_data"] is True
     reports = client.get(f"{API}/projects/{project_id}/reports", headers=headers).json()
     assert [r["scan_id"] for r in reports] == [scan_id]
+
+
+def test_an_interrupted_retest_is_finished_so_its_page_stops_waiting(client):
+    headers = signup(client, "interruptedretest")
+    project_id = make_project(client, headers)
+    client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
+    client.post(f"{API}/projects/{project_id}/scans", headers=headers)
+    opportunities = client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json()
+    target = next(o for o in opportunities if o["related_prompts"])
+    started = client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/retest", headers=headers).json()
+
+    # The server died mid re-test: the scan and the opportunity both still say "running".
+    with SessionLocal() as session:
+        scan = session.get(Scan, started["retest"]["scan_id"])
+        scan.status, scan.completed_at = "running", None
+        opportunity = session.get(Opportunity, target["id"])
+        retest = {k: v for k, v in opportunity.evidence["retest"].items() if k not in ("after", "verdict", "completed_at")}
+        opportunity.evidence = {**opportunity.evidence, "retest": {**retest, "status": "running"}}
+        session.commit()
+
+    recover_interrupted_scans()
+
+    done = client.get(f"{API}/projects/{project_id}/opportunities/{target['id']}", headers=headers).json()
+    assert done["retest"]["status"] == "done" and done["retest"]["after"]["answers"] > 0
+    assert done["retest"]["verdict"] in ("better", "worse", "too_early")

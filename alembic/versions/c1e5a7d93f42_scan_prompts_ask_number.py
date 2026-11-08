@@ -24,6 +24,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # The old unique key allows one row per prompt text, so repeat asks go; their re-test answers are deleted with them (cascade).
     op.execute("DELETE FROM scan_prompts WHERE ask_number > 1")
     op.drop_constraint("uq_scan_prompt_text", "scan_prompts", type_="unique")
     op.create_unique_constraint("uq_scan_prompt_text", "scan_prompts", ["scan_id", "text"])
