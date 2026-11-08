@@ -14,6 +14,8 @@ class ProviderContext:
     country: str = ""
     # Search the web like the consumer app does, so answers match what people actually see.
     web_search: bool = False
+    # Retries inside one provider call; None keeps the configured default. The scan executor sets 0: it backs off itself.
+    retries: int | None = None
 
 
 @dataclass

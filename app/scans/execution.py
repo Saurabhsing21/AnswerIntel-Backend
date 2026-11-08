@@ -119,6 +119,7 @@ class ScanExecutionService:
                 brand_website=project.website,
                 variation=scan.id,
                 country=project.country or "",
+                retries=0,  # the executor's ask() below is the one retry layer for scan answers
             )
 
             done = {

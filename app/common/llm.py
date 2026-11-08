@@ -45,8 +45,9 @@ def chat(
     json_mode: bool = False,
     timeout: float | None = None,
     web_search: bool = False,
+    retries: int | None = None,
 ) -> dict:
-    """One OpenRouter chat completion with retry on rate limits and server errors."""
+    """One OpenRouter chat completion with retry on rate limits and server errors (retries=None: the configured count)."""
     if not settings.ai_enabled:
         raise LLMError("OPENROUTER_API_KEY is not set")
 
@@ -61,8 +62,9 @@ def chat(
         "HTTP-Referer": "https://seenlens.com",
         "X-Title": "SeenLens",
     }
+    max_retries = settings.provider_max_retries if retries is None else retries
     last_error: Exception | None = None
-    for attempt in range(settings.provider_max_retries + 1):
+    for attempt in range(max_retries + 1):
         started = time.monotonic()
         try:
             response = httpx.post(
@@ -89,7 +91,7 @@ def chat(
                     web_searches=0, status="failed", latency_ms=int((time.monotonic() - started) * 1000),
                 )
             retryable = not isinstance(exc, PermanentLLMError)
-            if attempt < settings.provider_max_retries and retryable:
+            if attempt < max_retries and retryable:
                 time.sleep(2 * (attempt + 1))
                 continue
             break

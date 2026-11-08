@@ -1,4 +1,5 @@
 import uuid
+from collections import Counter
 
 import httpx
 import pytest
@@ -147,6 +148,36 @@ def test_threaded_scan_rows_carry_scan_attribution(client, ai_on, monkeypatch):
     assert {r.purpose for r in rows} == {"scan_answer", "answer_analysis"}
     assert {r.engine for r in rows} == {"chatgpt_search", "perplexity"}
     assert all(str(r.project_id) == project_id and r.workspace_id == workspace_id for r in rows)
+
+
+def test_chat_retries_keyword_overrides_the_setting(ai_on, monkeypatch):
+    sent = fake_post(monkeypatch, [FakeResponse(503, {})])
+    with pytest.raises(llm.LLMError):
+        chat(unique("no-retry"), MESSAGES, retries=0)
+    assert len(sent) == 1  # settings.provider_max_retries is 2, but retries=0 wins
+
+
+def test_scan_answer_is_attempted_once_per_executor_attempt(client, ai_on, monkeypatch):
+    """The executor's 30s/2m/10m backoff is the only retry layer for scan answers: 4 attempts, not 4 x 3."""
+    registry = ModelRegistry([ModelConfig("chatgpt_search", "test/one-layer", "One")])
+    monkeypatch.setattr("app.scans.execution._backoff", lambda s: None)
+    posted: list[str] = []
+
+    def post(url, json=None, headers=None, timeout=None):
+        posted.append(json["messages"][-1]["content"])
+        return FakeResponse(503, {})
+
+    monkeypatch.setattr(llm.httpx, "post", post)
+    headers = signup(client, "onelayer")
+    project_id = make_project(client, headers)
+    client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
+    with SessionLocal() as session:
+        project = session.scalar(select(Project).where(Project.id == project_id))
+        scan = ScanService(model_registry=registry).start_scan(session, project)
+        session.commit()
+        scan_id = scan.id
+    ScanService(provider=OpenRouterProvider(), model_registry=registry).run(scan_id)
+    assert posted and set(Counter(posted).values()) == {len(settings.retry_delays) + 1}
 
 
 def test_free_check_calls_are_recorded_as_free_check(ai_on, monkeypatch):

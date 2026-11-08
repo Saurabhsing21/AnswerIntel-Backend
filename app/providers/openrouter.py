@@ -54,6 +54,7 @@ class OpenRouterProvider(AIProvider):
             messages,
             timeout=settings.provider_timeout_seconds,
             web_search=bool(context and context.web_search),
+            retries=context.retries if context else None,
         )
         text = data["choices"][0]["message"].get("content") or ""
         return AIResponse(
