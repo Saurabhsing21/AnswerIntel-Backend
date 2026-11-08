@@ -24,8 +24,9 @@ def rate_limits_off(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def daily_budget_off(monkeypatch):
-    """The test database keeps every ai_calls row ever written; the global budget has its own tests in test_spend_guardrails.py."""
+    """The test database keeps every ai_calls row ever written; the daily budgets have their own tests in test_spend_guardrails.py."""
     monkeypatch.setattr(settings, "daily_ai_budget_usd", 0)
+    monkeypatch.setattr(settings, "free_check_daily_budget_usd", 0)
 
 
 @pytest.fixture(autouse=True)

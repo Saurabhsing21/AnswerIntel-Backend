@@ -12,7 +12,7 @@ from app.common.database import SessionLocal
 from app.common.errors import AppError
 from app.common.ratelimit import client_ip
 from app.freecheck.models import FreeCheck
-from app.costs.service import check_global_budget
+from app.costs.service import check_free_check_budget
 from app.freecheck.service import run_free_check
 
 def require_enabled() -> None:
@@ -69,7 +69,7 @@ def start_free_check(payload: FreeCheckRequest, request: Request, background_tas
         )
         if recent:  # the same site checked today gets today's result, at no extra cost
             return serialize(recent)
-        check_global_budget(session)  # anonymous: no workspace, so only the global daily budget applies
+        check_free_check_budget(session)  # anonymous: its own daily budget, apart from what paying users spend
         today = session.scalar(select(func.count()).select_from(FreeCheck).where(FreeCheck.created_at >= since)) or 0
         if today >= settings.free_checks_per_day:
             raise AppError(429, "FREE_CHECK_LIMIT", "We've run all of today's free checks. Try again tomorrow, or pick a plan for a full report.")

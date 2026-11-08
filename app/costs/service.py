@@ -7,7 +7,8 @@ from uuid import UUID
 
 from sqlalchemy import func, select, text
 
-from app.billing.plans import PLANS, entitlements
+from app.billing.models import Subscription
+from app.billing.plans import NONE, PLANS
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
@@ -100,7 +101,10 @@ def finalize_scan_cost(session, scan) -> None:
     scan.web_searches = int(searches)
 
 
-_alerted_on: date | None = None
+_alerted_on: date | None = None  # the day the "budget reached" error was logged
+_warned_on: date | None = None  # the day the "70% spent" error was logged
+WARN_AT = Decimal("0.7")
+FREE_CHECK = "free_check"
 
 
 def _sum_since(session, since: datetime, workspace_id: UUID | None = None) -> Decimal:
@@ -110,9 +114,11 @@ def _sum_since(session, since: datetime, workspace_id: UUID | None = None) -> De
     return Decimal(session.scalar(query))
 
 
-def spend_today(session) -> Decimal:
-    now = datetime.now(timezone.utc)
-    return _sum_since(session, now.replace(hour=0, minute=0, second=0, microsecond=0))
+def spend_today(session, free_check: bool = False) -> Decimal:
+    """Today's (UTC) spend on the free check alone, or on everything else: each has its own daily budget."""
+    midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    purpose = AICall.purpose == FREE_CHECK if free_check else AICall.purpose != FREE_CHECK
+    return Decimal(session.scalar(select(func.coalesce(func.sum(AICall.cost_usd), 0)).where(AICall.created_at >= midnight, purpose)))
 
 
 def workspace_spend_this_month(session, workspace_id: UUID) -> Decimal:
@@ -120,11 +126,28 @@ def workspace_spend_this_month(session, workspace_id: UUID) -> Decimal:
     return _sum_since(session, now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), workspace_id)
 
 
+def paid_per_month(plan_key: str, interval: str | None) -> Decimal:
+    """What a subscription pays a month: a yearly price (20% off) spread over twelve months."""
+    plan = PLANS.get(plan_key, NONE)
+    return Decimal(plan.price_yearly) / 12 if interval == "year" else Decimal(plan.price_monthly)
+
+
 def workspace_cap(session, workspace_id: UUID) -> Decimal:
-    price = PLANS[entitlements(session, workspace_id).plan].price_monthly
+    sub = session.scalar(select(Subscription).where(Subscription.workspace_id == workspace_id))
+    price = paid_per_month(sub.plan, sub.interval) if sub else Decimal(0)
     if price == 0:
         return Decimal(str(settings.free_workspace_cost_cap_usd))
-    return Decimal(price) * Decimal(str(settings.workspace_cost_cap_ratio))
+    return price * Decimal(str(settings.workspace_cost_cap_ratio))
+
+
+def global_daily_budget(session) -> Decimal:
+    """The flat daily budget plus a share of every paying workspace's monthly cap, so capacity grows with revenue."""
+    paid = [key for key, plan in PLANS.items() if plan.price_monthly]
+    rows = session.execute(
+        select(Subscription.plan, Subscription.interval).where(Subscription.plan.in_(paid), Subscription.status.in_(("active", "past_due")))
+    ).all()
+    caps = sum((paid_per_month(plan, interval) for plan, interval in rows), Decimal(0)) * Decimal(str(settings.workspace_cost_cap_ratio))
+    return Decimal(str(settings.daily_ai_budget_usd)) + Decimal(str(settings.daily_budget_share_of_paid_cap)) * caps
 
 
 GLOBAL_LOCK_KEY = 7_340_001  # arbitrary constant: all global-budget checks that create a scan queue on it
@@ -147,16 +170,28 @@ def _lock_budget(session, workspace_id: UUID | None) -> None:
 
 
 def check_global_budget(session) -> None:
-    """Refuse once the global daily AI budget is spent. For callers with no workspace (the anonymous free check)."""
-    global _alerted_on
-    if settings.daily_ai_budget_usd > 0:
-        spent = spend_today(session)
-        if spent >= Decimal(str(settings.daily_ai_budget_usd)):
-            today = datetime.now(timezone.utc).date()
-            if _alerted_on != today:
-                _alerted_on = today
-                log.error("Daily AI budget reached: spent $%s of $%s today. Scans are paused until tomorrow (UTC).", spent, settings.daily_ai_budget_usd)
-            raise AppError(429, "AI_BUDGET_REACHED", "Scans are paused for today while we add capacity. Try again tomorrow.")
+    """Refuse once the global daily AI budget is spent; warn once a day at 70%. Free check spend is not counted here
+    (it has check_free_check_budget), so anonymous traffic cannot pause paying users' scans."""
+    global _alerted_on, _warned_on
+    if settings.daily_ai_budget_usd <= 0:
+        return
+    spent, budget = spend_today(session), global_daily_budget(session)
+    today = datetime.now(timezone.utc).date()
+    if spent >= budget:
+        if _alerted_on != today:
+            _alerted_on = today
+            log.error("Daily AI budget reached: spent $%s of $%s today. Scans are paused until tomorrow (UTC).", spent, budget)
+        raise AppError(429, "AI_BUDGET_REACHED", "Scans are paused for today while we add capacity. Try again tomorrow.")
+    if spent >= budget * WARN_AT and _warned_on != today:
+        _warned_on = today
+        log.error("AI spend passed 70%% of today's budget: spent $%s of $%s.", spent, budget)
+
+
+def check_free_check_budget(session) -> None:
+    """The anonymous free check's own daily budget, counted over free check spend only."""
+    budget = Decimal(str(settings.free_check_daily_budget_usd))
+    if budget > 0 and spend_today(session, free_check=True) >= budget:
+        raise AppError(429, "AI_BUDGET_REACHED", "Free checks are paused for today. Try again tomorrow, or pick a plan for a full report.")
 
 
 def check_budget(session, workspace_id: UUID, lock: bool = False) -> None:

@@ -6,7 +6,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
-from app.costs.service import cost_scope
+from app.costs.service import FREE_CHECK, cost_scope
 from app.analysis.base import AnalysisContext
 from app.analysis.service import ResponseAnalysisService
 from app.common.config import settings
@@ -36,7 +36,7 @@ def run_free_check(check_id: UUID) -> None:
         session.commit()
         brand, website, category, country = check.brand_name, check.website, check.category, check.country
     try:
-        with cost_scope(purpose="free_check"):
+        with cost_scope(purpose=FREE_CHECK):  # what the free check's own daily budget counts
             result = _check(brand, website, category, country)
         status = "done"
     except Exception:

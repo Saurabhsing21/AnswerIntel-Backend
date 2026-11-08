@@ -4,12 +4,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from app.billing.models import Subscription
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.costs import service as costs
 from app.costs.models import AICall
 from app.projects.models import Project
 from app.schedules.service import dispatch_due_scans
+from app.workspaces.models import Workspace
 from tests.conftest import API, make_project, signup
 from tests.test_schedules import created_at, enable, next_slot
 
@@ -19,11 +21,21 @@ def workspace_of(project_id):
         return session.get(Project, uuid.UUID(project_id)).workspace_id
 
 
-def spend(workspace_id, amount):
+def spend(workspace_id, amount, purpose="scan"):
     with SessionLocal() as session:
-        session.add(AICall(workspace_id=workspace_id, purpose="scan", provider="openrouter", model="m", cost_usd=Decimal(amount),
+        session.add(AICall(workspace_id=workspace_id, purpose=purpose, provider="openrouter", model="m", cost_usd=Decimal(amount),
                            cost_source="provider", status="ok"))
         session.commit()
+
+
+def subscribed_workspace(plan, interval="month", status="active"):
+    with SessionLocal() as session:
+        workspace = Workspace(name=f"{plan} {interval} {status}")
+        session.add(workspace)
+        session.flush()
+        session.add(Subscription(workspace_id=workspace.id, plan=plan, interval=interval, status=status))
+        session.commit()
+        return workspace.id
 
 
 def project_with_prompts(client, prefix):
@@ -37,6 +49,7 @@ def test_global_daily_budget_blocks_user_scans_and_alerts_once(client, monkeypat
     headers, project_id = project_with_prompts(client, "budget")
     spend(workspace_of(project_id), "0.5")  # a known row for today, so spend_today is at least 0.5 whatever else is stored
     monkeypatch.setattr(settings, "daily_ai_budget_usd", 0.5)  # small and positive: reached
+    monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0)  # every test workspace is on paid Pro
     monkeypatch.setattr(costs, "_alerted_on", None)
     with caplog.at_level(logging.ERROR, logger=costs.log.name):
         for _ in range(2):
@@ -54,7 +67,7 @@ def test_budget_zero_disables_the_global_limit(client, monkeypatch):
 
 def test_workspace_cap_blocks_user_scans(client):
     headers, project_id = project_with_prompts(client, "cap")
-    spend(workspace_of(project_id), "60")  # test workspaces are on Pro: 50% of $100 = $50 a month
+    spend(workspace_of(project_id), "60")  # test workspaces are on Pro: 60% of $100 = $60 a month
     res = client.post(f"{API}/projects/{project_id}/scans", headers=headers)
     assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
 
@@ -133,18 +146,65 @@ def test_onboarding_without_a_workspace_is_only_held_by_the_global_budget(client
         session.commit()
     spend(None, "0.5")
     monkeypatch.setattr(settings, "daily_ai_budget_usd", 0.5)
+    monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0)
     brand = {"brand_name": "Halden", "website": "https://halden.co", "category": "CRM", "country": "US"}
     res = client.post(f"{API}/onboarding/competitors", headers=headers, json=brand)
     assert res.status_code == 429 and "AI_BUDGET_REACHED" in res.text
 
 
-def test_free_check_is_blocked_by_the_global_budget(client, monkeypatch):
+def test_free_check_is_blocked_by_its_own_daily_budget(client, monkeypatch):
     monkeypatch.setattr(settings, "free_check_enabled", True)
-    spend(None, "0.5")
-    monkeypatch.setattr(settings, "daily_ai_budget_usd", 0.5)
+    spend(None, "0.5", purpose="free_check")
+    with SessionLocal() as session:  # exactly today's free check spend: reached
+        monkeypatch.setattr(settings, "free_check_daily_budget_usd", float(costs.spend_today(session, free_check=True)))
     body = {"brand_name": "Halden", "website": f"nobudget-{uuid.uuid4().hex[:8]}.example.com", "category": "CRM software"}
     res = client.post(f"{API}/free-check", json=body)
     assert res.status_code == 429 and "AI_BUDGET_REACHED" in res.text
+
+
+def test_free_check_spend_cannot_block_a_paid_scan(client, monkeypatch):
+    headers, project_id = project_with_prompts(client, "freespend")
+    monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0)
+    with SessionLocal() as session:  # one dollar of room left for everything but the free check
+        monkeypatch.setattr(settings, "daily_ai_budget_usd", float(costs.spend_today(session)) + 1)
+    spend(None, "5", purpose="free_check")  # far more than that dollar, all of it on the free check
+    assert client.post(f"{API}/projects/{project_id}/scans", headers=headers).status_code == 200
+
+
+def test_global_budget_grows_with_paid_subscriptions(monkeypatch):
+    monkeypatch.setattr(settings, "daily_ai_budget_usd", 10.0)
+    monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0.1)
+    monkeypatch.setattr(settings, "workspace_cost_cap_ratio", 0.6)
+    with SessionLocal() as session:
+        before = costs.global_daily_budget(session)
+    subscribed_workspace("starter", "year")  # pays $16 a month: cap $9.60
+    subscribed_workspace("pro", status="past_due")  # still counts while payment is retried: cap $60
+    for plan, status in (("growth", "canceled"), ("free", "active"), ("trial", "trialing")):
+        subscribed_workspace(plan, status=status)  # not paying: adds nothing
+    with SessionLocal() as session:
+        assert costs.global_daily_budget(session) - before == Decimal("0.1") * (Decimal("9.6") + Decimal("60"))
+
+
+def test_yearly_starter_cap_uses_what_it_pays_a_month(monkeypatch):
+    monkeypatch.setattr(settings, "workspace_cost_cap_ratio", 0.6)
+    yearly, monthly = subscribed_workspace("starter", "year"), subscribed_workspace("starter")
+    with SessionLocal() as session:
+        assert costs.workspace_cap(session, yearly) == Decimal("9.6")  # $192 / 12 = $16, x 0.6
+        assert costs.workspace_cap(session, monthly) == Decimal("12")  # $20 x 0.6
+
+
+def test_spend_past_70_percent_of_the_budget_logs_once_a_day(monkeypatch, caplog):
+    spend(None, "0.5")
+    monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0)
+    monkeypatch.setattr(costs, "_warned_on", None)
+    with SessionLocal() as session:
+        spent = costs.spend_today(session)
+        monkeypatch.setattr(settings, "daily_ai_budget_usd", float(spent / Decimal("0.8")))  # 80% spent: warn, keep going
+        with caplog.at_level(logging.ERROR, logger=costs.log.name):
+            for _ in range(2):
+                costs.check_global_budget(session)
+    warnings = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(warnings) == 1 and "70%" in warnings[0].getMessage()
 
 
 def test_workspace_lock_key_is_stable_and_distinct_per_workspace():
