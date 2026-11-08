@@ -15,10 +15,13 @@ def margin(rate: float | None, n: int) -> float | None:
 
 
 def significant(before: float | None, n_before: int, after: float | None, n_after: int) -> bool | None:
-    """Two-proportion z-test: is the change bigger than sampling noise? None when it cannot be judged."""
+    """Two-proportion z-test: is the change bigger than sampling noise? None when it cannot be judged.
+    The standard error is pooled: a side at 0% or 100% has no spread of its own, and unpooled it would let a
+    handful of answers pass as a real change."""
     if before is None or after is None or n_before <= 0 or n_after <= 0:
         return None
-    se = sqrt(before * (1 - before) / n_before + after * (1 - after) / n_after)
-    if se == 0:
-        return after != before
+    pooled = (before * n_before + after * n_after) / (n_before + n_after)
+    se = sqrt(pooled * (1 - pooled) * (1 / n_before + 1 / n_after))
+    if se == 0:  # both sides all 0% or all 100%: nothing moved
+        return False
     return abs(after - before) > Z * se

@@ -171,7 +171,7 @@ def test_only_a_better_verdict_marks_the_fix_completed(client, monkeypatch):
     scan_and_wait(client, headers, project_id)
     targets = [o for o in opportunities(client, headers, project_id) if o["related_prompts"]][:2]
     for target, result in zip(targets, ("worse", "better")):
-        monkeypatch.setattr("app.opportunities.retest.verdict", lambda before, after, result=result: result)
+        monkeypatch.setattr("app.opportunities.retest.verdict", lambda before, after, *rate, result=result: result)
         client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/retest", headers=headers)
         after = client.get(f"{API}/projects/{project_id}/opportunities/{target['id']}", headers=headers).json()
         assert after["retest"]["verdict"] == result
@@ -187,6 +187,43 @@ def test_retest_verdict_needs_a_change_bigger_than_noise():
     assert verdict(counts(10, 4), counts(30, 14)) == "too_early"  # 40% -> 47%: noise
     assert verdict(None, counts(30, 20)) == "too_early"  # no full scan to compare with
     assert verdict(counts(0, 0), counts(30, 20)) == "too_early" and verdict(counts(10, 2), counts(0, 0)) == "too_early"
+    # A zero "before" adds no variance on its own side; pooling keeps small samples from passing as a win.
+    assert verdict(counts(2, 0), counts(6, 3)) == "too_early"  # 0% -> 50% on 2 and 6 answers: noise
+    assert verdict(counts(2, 0), counts(6, 6)) == "better"  # 0% -> 100%
+    assert verdict(counts(1, 0), counts(3, 3)) == "too_early"  # one answer before is not a baseline
+
+
+def test_significance_pools_both_samples():
+    from app.metrics.stats import significant
+
+    assert significant(0.0, 2, 0.5, 6) is False and significant(0.0, 2, 4 / 6, 6) is False
+    assert significant(0.0, 6, 4 / 18, 18) is False and significant(0.0, 10, 5 / 30, 30) is False
+    assert significant(0.0, 10, 0.0, 30) is False and significant(1.0, 5, 1.0, 5) is False  # identical, no spread
+    assert significant(0.1, 10, 0.8, 30) is True
+
+
+def test_a_comparison_fix_is_judged_on_recommendations(monkeypatch):
+    """A comparison gap is lost when the brand is named but not recommended, so its re-test is judged the same way."""
+    from types import SimpleNamespace
+
+    from app.opportunities import retest
+
+    counts = lambda answers, mentioned, recommended: {"answers": answers, "mentioned": mentioned, "recommended": recommended}  # noqa: E731
+    assert retest.verdict(counts(10, 10, 1), counts(30, 30, 24), "recommended") == "better"
+    assert retest.verdict(counts(10, 10, 1), counts(30, 30, 24)) == "too_early"  # named every time, before and after
+
+    def finish(category):
+        opportunity = SimpleNamespace(status="open", evidence={"category": category, "retest": {
+            "status": "running", "before": counts(10, 10, 1)}})
+        session = SimpleNamespace(get=lambda model, pk: opportunity, scalars=lambda q: ["a vs b?"])
+        monkeypatch.setattr(retest, "results_for", lambda session, scan_id, texts: counts(30, 30, 24))
+        retest.finish_retest(session, SimpleNamespace(id=1, opportunity_id=7, completed_runs=30))
+        return opportunity
+
+    for category in ("COMPARISON", "COMPETITOR"):
+        done = finish(category)
+        assert done.evidence["retest"]["verdict"] == "better" and done.status == "completed"
+    assert finish("USE_CASE").evidence["retest"]["verdict"] == "too_early"
 
 
 def test_track_as_experiment_freezes_a_baseline_once(client):

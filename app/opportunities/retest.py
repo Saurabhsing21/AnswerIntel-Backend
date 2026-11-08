@@ -9,9 +9,13 @@ from app.analysis.models import Mention
 from app.metrics.stats import significant
 from app.metrics.models import MetricSnapshot
 from app.opportunities.models import Opportunity
+from app.opportunities.service import COMPARISON_CATEGORIES
 from app.prompts.models import ScanPrompt
 from app.providers.response_model import AIResponseRecord
 from app.scans.models import Scan
+
+
+MIN_ANSWERS = 2  # per side, before a re-test can say better or worse
 
 
 def results_for(session: Session, scan_id: int, texts: list[str]) -> dict:
@@ -30,14 +34,21 @@ def latest_full_scan(session: Session, project_id) -> int | None:
     return session.scalar(select(func.max(MetricSnapshot.scan_id)).where(MetricSnapshot.project_id == project_id))
 
 
-def verdict(before: dict | None, after: dict) -> str:
-    """"better" or "worse" only when the mention rate moved by more than sampling noise; otherwise "too_early"."""
-    if not before or not before["answers"] or not after["answers"]:
+def verdict(before: dict | None, after: dict, rate: str = "mentioned") -> str:
+    """"better" or "worse" only when the rate (`mentioned` or `recommended` answers) moved by more than sampling
+    noise; otherwise "too_early". Fewer than 2 answers on either side is no baseline to judge from."""
+    if not before or before["answers"] < MIN_ANSWERS or after["answers"] < MIN_ANSWERS:
         return "too_early"
-    old, new = before["mentioned"] / before["answers"], after["mentioned"] / after["answers"]
+    old, new = before[rate] / before["answers"], after[rate] / after["answers"]
     if significant(old, before["answers"], new, after["answers"]):
         return "better" if new > old else "worse"
     return "too_early"
+
+
+def _rate(opportunity: Opportunity) -> str:
+    """The same rule as the gap: comparison questions are lost when the brand is not recommended, the rest when it is
+    not named. Question gaps are per category, so the opportunity's category decides."""
+    return "recommended" if opportunity.evidence.get("category") in COMPARISON_CATEGORIES else "mentioned"
 
 
 def finish_retest(session: Session, scan: Scan) -> None:
@@ -51,7 +62,7 @@ def finish_retest(session: Session, scan: Scan) -> None:
     retest.update({
         "status": "done" if scan.completed_runs else "failed",
         "after": after,
-        "verdict": verdict(retest.get("before"), after),
+        "verdict": verdict(retest.get("before"), after, _rate(opportunity)),
         "completed_at": datetime.now(timezone.utc).isoformat(),
     })
     if retest["verdict"] == "better":
