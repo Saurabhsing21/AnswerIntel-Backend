@@ -1,7 +1,7 @@
 """The action loop: opportunities keep their status across scans, show what changed, and a fix can be re-tested."""
 
 from app.metrics.service import Observation
-from app.opportunities.service import detect
+from app.opportunities.service import detect, fingerprint
 from app.providers.response_model import AIResponseRecord
 from app.scans.models import Scan
 from app.common.database import SessionLocal
@@ -32,10 +32,9 @@ def test_status_and_trend_carry_across_scans(client):
     client.patch(f"{API}/projects/{project_id}/opportunities/{working['id']}", json={"status": "in_progress"}, headers=headers)
 
     scan_and_wait(client, headers, project_id)
-    by_type = {}
-    for o in opportunities(client, headers, project_id):
-        by_type.setdefault((o["type"], o["evidence"].get("competitor") or o["evidence"].get("category")), o)
-    kept = by_type[(dismissed["type"], dismissed["evidence"].get("competitor") or dismissed["evidence"].get("category"))]
+    # Keyed like the product keys a gap across scans: one identity per question category, whatever its gap type.
+    by_identity = {fingerprint(o): o for o in opportunities(client, headers, project_id)}
+    kept = by_identity[fingerprint(dismissed)]
     assert kept["status"] == "dismissed" and kept["trend"] != "new"
     assert kept["first_seen_scan_id"] == dismissed["scan_id"]
 

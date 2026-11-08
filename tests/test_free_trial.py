@@ -1,9 +1,11 @@
 """The free trial: a new account gets one scan of one brand, after confirming its email."""
 
 import re
+import uuid
 
 
 from app.common.database import SessionLocal
+from app.opportunities.models import Opportunity
 from tests.conftest import API, make_project, signup
 
 
@@ -92,7 +94,12 @@ def test_paid_features_answer_with_an_upgrade_on_the_trial(client, outbox, trial
     client.post(f"{API}/projects/{project_id}/scans", headers=headers)
     workspace = client.get(f"{API}/workspaces", headers=headers).json()[0]["id"]
     scan_id = client.get(f"{API}/projects/{project_id}/scans", headers=headers).json()[0]["id"]
-    opportunity = client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json()[0]["id"]
+    with SessionLocal() as session:  # simulated answers do not always leave a gap, so add one to act on
+        row = Opportunity(project_id=uuid.UUID(project_id), scan_id=scan_id, type="CONTENT_GAP", title="t", description="d",
+                          recommended_action="a", impact="high", confidence=0.8, evidence={"prompts": ["q"]})
+        session.add(row)
+        session.commit()
+        opportunity = row.id
     calls = [
         ("post", f"/projects/{project_id}/prompts/suggest", {"instructions": "pricing"}),
         ("post", f"/projects/{project_id}/prompts", {"text": "Which payroll tool is best for India?"}),
