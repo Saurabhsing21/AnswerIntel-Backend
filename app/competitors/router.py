@@ -72,6 +72,7 @@ def add_competitor(
             project_id=project.id,
             name=request.name,
             website=str(request.website),
+            aliases=request.aliases or [],
         )
 
         session.add(competitor)
@@ -82,6 +83,7 @@ def add_competitor(
             "id": competitor.id,
             "name": competitor.name,
             "website": competitor.website,
+            "aliases": competitor.aliases or [],
         }
 
 
@@ -115,6 +117,7 @@ def list_competitors(
                 "id": competitor.id,
                 "name": competitor.name,
                 "website": competitor.website,
+                "aliases": competitor.aliases or [],
             }
             for competitor in competitors
         ]
@@ -180,9 +183,11 @@ def update_competitor(
             competitor.name = request.name.strip()
         if request.website is not None:
             competitor.website = str(request.website)
+        if request.aliases is not None:
+            competitor.aliases = request.aliases
         session.commit()
         session.refresh(competitor)
-        return {"id": competitor.id, "name": competitor.name, "website": competitor.website}
+        return {"id": competitor.id, "name": competitor.name, "website": competitor.website, "aliases": competitor.aliases or []}
 
 
 @router.get("/suggestions")

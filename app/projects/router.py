@@ -55,6 +55,7 @@ def create_project(
             category=request.category,
             country=request.country,
             engines=request.engines,
+            aliases=request.aliases or [],
         )
 
         session.add(project)
@@ -74,6 +75,7 @@ def create_project(
             "category": project.category,
             "country": project.country,
             "engines": [e.key for e in engines_for_project(project.engines)],
+            "aliases": project.aliases or [],
         }
 
 
@@ -105,6 +107,7 @@ def get_project(
             "category": project.category,
             "country": project.country,
             "engines": [e.key for e in engines_for_project(project.engines)],
+            "aliases": project.aliases or [],
         }
 
 
@@ -129,6 +132,7 @@ def list_projects(
                 "category": project.category,
                 "country": project.country,
                 "engines": [e.key for e in engines_for_project(project.engines)],
+                "aliases": project.aliases or [],
             }
             for project in projects
         ]
@@ -172,6 +176,9 @@ def update_project(
             check_engine_choice(entitlements(session, project.workspace_id), request.engines)
             project.engines = request.engines
 
+        if request.aliases is not None:
+            project.aliases = request.aliases
+
         session.commit()
         session.refresh(project)
 
@@ -184,6 +191,7 @@ def update_project(
             "category": project.category,
             "country": project.country,
             "engines": [e.key for e in engines_for_project(project.engines)],
+            "aliases": project.aliases or [],
         }
 
 @router.delete("/{project_id}")

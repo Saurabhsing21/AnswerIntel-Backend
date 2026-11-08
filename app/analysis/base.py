@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 @dataclass
 class AnalysisContext:
     brand_name: str
-    # [{"id": int, "name": str, "website": str?}]
+    # [{"id": int, "name": str, "website": str?, "aliases": list[str]?}]
     competitors: list[dict]
     brand_website: str = ""
     prompt: str = ""

@@ -57,6 +57,9 @@ class Project(Base):
     # Engine keys this project scans (app/providers/models.py). None = the default engines.
     engines: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
+    # Other names for the brand ("Halden CRM"), so answers using them still count as mentions.
+    aliases: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

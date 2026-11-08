@@ -312,7 +312,7 @@ def competitor_analysis(project_id: UUID, scan_id: int | None = None, current_us
             losses = [r["text"] for r in per_prompt.values() if c.id in r["comps"] and not r["you"]]
             m = metrics.get(c.id)
             result.append({
-                "id": c.id, "name": c.name, "website": c.website,
+                "id": c.id, "name": c.name, "website": c.website, "aliases": c.aliases or [],
                 "mention_rate": m.mention_rate if m else 0, "recommendation_rate": m.recommendation_rate if m else 0,
                 "share_of_voice": m.share_of_voice if m else 0, "average_position": m.average_position if m else None,
                 "you_win": len(wins), "they_win": len(losses),

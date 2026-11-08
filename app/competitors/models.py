@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
@@ -28,6 +28,9 @@ class Competitor(Base):
         String(500),
         nullable=False,
     )
+
+    # Other names for this competitor ("HubSpot CRM" for "HubSpot").
+    aliases: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list, server_default="[]")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

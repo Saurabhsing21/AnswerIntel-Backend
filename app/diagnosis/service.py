@@ -72,8 +72,11 @@ def technical(website: str, engine: str, fetch: Fetch) -> dict | None:
     }
 
 
-def source_gap(brand: str, competitors: list[str], citations: list[dict], fetch: Fetch) -> dict | None:
-    """Third-party pages the engine relied on that name competitors but not the brand."""
+def source_gap(
+    brand: str, competitors: list[dict], citations: list[dict], fetch: Fetch, brand_aliases: list[str] | None = None
+) -> dict | None:
+    """Third-party pages the engine relied on that name competitors but not the brand. `competitors` are
+    [{name, aliases?}]; a page naming a competitor or the brand by another name counts."""
     pages, unread = [], []
     seen: set[str] = set()
     for c in citations:
@@ -87,9 +90,9 @@ def source_gap(brand: str, competitors: list[str], citations: list[dict], fetch:
             unread.append({"url": c["url"], "domain": c.get("domain")})
             continue
         text = _visible_text(got[1])
-        if _names_in(text, [brand]):
+        if _names_in(text, [brand, *(brand_aliases or [])]):
             continue
-        listed = _names_in(text, competitors)
+        listed = [c["name"] for c in competitors if _names_in(text, [c["name"], *(c.get("aliases") or [])])]
         if listed:
             pages.append({"url": c["url"], "domain": c.get("domain"), "title": c.get("title"), "competitors": listed})
     if not pages:
@@ -157,9 +160,9 @@ def winning_criteria(winners: list[dict], picked: bool = True) -> dict | None:
 
 def diagnose(
     *, brand: str, website: str, engine: str, prompt: str, mention: dict, competitors: list[dict],
-    citations: list[dict], fetch: Fetch | None = None,
+    citations: list[dict], fetch: Fetch | None = None, brand_aliases: list[str] | None = None,
 ) -> dict:
-    """`mention`: the brand's verdict; `competitors`: [{name, mentioned, recommended, reason, evidence}]."""
+    """`mention`: the brand's verdict; `competitors`: [{name, aliases?, mentioned, recommended, reason, evidence}]."""
     fetch = fetch or cached_fetch
     if mention.get("recommended"):
         return {"status": "recommended", "causes": []}
@@ -167,7 +170,7 @@ def diagnose(
     winners = picked or [c for c in competitors if c.get("mentioned")]  # nobody picked: what it said about the ones it named
     causes = [
         technical(website, engine, fetch),
-        source_gap(brand, [c["name"] for c in competitors], citations, fetch),
+        source_gap(brand, competitors, citations, fetch, brand_aliases),
         winning_criteria(winners, picked=bool(picked)),
     ]
     if mention.get("mentioned"):

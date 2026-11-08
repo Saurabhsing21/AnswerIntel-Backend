@@ -65,12 +65,13 @@ def export_data(session: Session, user: User) -> dict:
             names = {c.id: c.name for c in competitors}
             projects.append({
                 "id": str(project.id), "brand_name": project.brand_name, "website": project.website, "description": project.description,
-                "category": project.category, "country": project.country, "engines": project.engines, "created_at": _iso(project.created_at),
+                "category": project.category, "country": project.country, "engines": project.engines, "aliases": project.aliases,
+                "created_at": _iso(project.created_at),
                 "questions": [
                     {"text": p.text, "category": p.category, "intent": p.intent, "active": p.is_active, "engines": p.engines}
                     for p in session.scalars(select(Prompt).where(Prompt.project_id == project.id).order_by(Prompt.id))
                 ],
-                "competitors": [{"name": c.name, "website": c.website} for c in competitors],
+                "competitors": [{"name": c.name, "website": c.website, "aliases": c.aliases} for c in competitors],
                 "scans": [_scan_export(session, s, names) for s in session.scalars(select(Scan).where(Scan.project_id == project.id).order_by(Scan.id))],
                 "reports": [
                     {"id": r.id, "type": r.type, "period_start": r.period_start.isoformat(), "period_end": r.period_end.isoformat(),

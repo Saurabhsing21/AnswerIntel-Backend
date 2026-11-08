@@ -58,7 +58,8 @@ def _words(text: str, words: tuple[str, ...]) -> int:
 
 def analyze_name(text: str, name: str, aliases: list[str] | None = None) -> dict:
     patterns = [name_pattern(n) for n in [name, *(aliases or [])] if n]
-    hits = sum(len(p.findall(text)) for p in patterns)
+    # Counted by where a mention starts: "HubSpot CRM" matches both "HubSpot" and "HubSpot CRM" but is one mention.
+    hits = len({m.start() for p in patterns for m in p.finditer(text)})
     if not hits:
         return {"mentioned": False, "recommended": False, "position": None, "sentiment": None, "mention_count": 0}
 

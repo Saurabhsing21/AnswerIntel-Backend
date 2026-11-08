@@ -110,8 +110,9 @@ class ScanExecutionService:
 
             analysis_context = AnalysisContext(
                 brand_name=project.brand_name.strip(),
-                competitors=[{"id": c.id, "name": c.name, "website": c.website} for c in competitors],
+                competitors=[{"id": c.id, "name": c.name, "website": c.website, "aliases": c.aliases or []} for c in competitors],
                 brand_website=project.website,
+                aliases=project.aliases or [],
             )
             provider_context = ProviderContext(
                 brand_name=project.brand_name.strip(),

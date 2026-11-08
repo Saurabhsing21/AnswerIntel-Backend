@@ -126,3 +126,91 @@ def test_llm_call_is_still_made_when_no_tracked_brand_appears(monkeypatch):
     assert "Brands: (none of the tracked brands appear)" in sent["user"]
     assert result["other_brands"] == ["Pipedrive", "Zoho"]
     assert result["brand"]["mentioned"] is False
+
+
+# --- Other names (aliases) for the brand and competitors ---
+
+HUBSPOT_ALIAS_CTX = AnalysisContext(
+    brand_name="Acme",
+    aliases=["Acme CRM"],
+    competitors=[{"id": 1, "name": "HubSpot", "aliases": ["HubSpot CRM"]}, {"id": 2, "name": "Attio"}],
+    prompt="Best CRM?",
+)
+
+
+def test_competitor_alias_matches_the_competitor():
+    # "HubSpot CRM" must count for the competitor named "HubSpot" even if the plain name is absent.
+    text = "I recommend HubSpot CRM for startups."
+    assert analyze_name(text, "HubSpot", ["HubSpot CRM"])["mentioned"] is True
+    result = ResponseAnalysisService(use_llm=False).analyze("Our top pick is Zoho Hub, then HubSpot CRM.", HUBSPOT_ALIAS_CTX)
+    hubspot = next(c for c in result["competitors"] if c["competitor_name"] == "HubSpot")
+    assert hubspot["mentioned"] is True
+    attio = next(c for c in result["competitors"] if c["competitor_name"] == "Attio")
+    assert attio["mentioned"] is False
+
+
+def test_name_and_alias_in_one_phrase_count_once():
+    # "HubSpot CRM" matches both patterns at the same spot: that is one mention, not two.
+    assert analyze_name("Try HubSpot CRM today.", "HubSpot", ["HubSpot CRM"])["mention_count"] == 1
+    assert analyze_name("HubSpot is fine. HubSpot CRM is better.", "HubSpot", ["HubSpot CRM"])["mention_count"] == 2
+
+
+def test_llm_brand_named_only_by_its_alias_is_mentioned(monkeypatch):
+    # The model answers under the alias it was shown; that verdict belongs to the brand.
+    _capture_llm(monkeypatch, AnalysisOutput(brands=[
+        BrandVerdict(name="Acme CRM", mentioned=True, recommended=True, position=1, sentiment="positive", reason="best"),
+    ]))
+    result = llm_module.analyze_with_llm("1. Acme CRM is the best choice for small teams.", HUBSPOT_ALIAS_CTX)
+    brand = result["brand"]
+    assert brand["mentioned"] is True and brand["recommended"] is True and brand["position"] == 1
+    assert brand["mention_count"] == 1
+
+
+def test_llm_verdict_under_the_main_name_counts_when_only_the_alias_is_in_the_text(monkeypatch):
+    _capture_llm(monkeypatch, AnalysisOutput(brands=[BrandVerdict(name="Acme", mentioned=True, recommended=False)]))
+    result = llm_module.analyze_with_llm("People like Acme CRM.", HUBSPOT_ALIAS_CTX)
+    assert result["brand"]["mentioned"] is True
+
+
+def test_llm_competitor_verdict_under_its_alias_counts(monkeypatch):
+    _capture_llm(monkeypatch, AnalysisOutput(brands=[
+        BrandVerdict(name="HubSpot CRM", mentioned=True, recommended=True, position=2, sentiment="positive"),
+    ]))
+    result = llm_module.analyze_with_llm("1. Zoho\n2. HubSpot CRM", HUBSPOT_ALIAS_CTX)
+    hubspot = result["competitors"][1]
+    assert hubspot["mentioned"] is True and hubspot["recommended"] is True and hubspot["position"] == 2
+
+
+def test_llm_prefers_the_recommending_verdict_when_both_names_get_one(monkeypatch):
+    _capture_llm(monkeypatch, AnalysisOutput(brands=[
+        BrandVerdict(name="Acme", mentioned=True, recommended=False),
+        BrandVerdict(name="Acme CRM", mentioned=True, recommended=True, position=1),
+    ]))
+    result = llm_module.analyze_with_llm("1. Acme CRM is the best choice.", HUBSPOT_ALIAS_CTX)
+    assert result["brand"]["recommended"] is True and result["brand"]["position"] == 1
+
+
+def test_llm_alias_absent_from_the_text_cannot_be_invented(monkeypatch):
+    _capture_llm(monkeypatch, AnalysisOutput(brands=[
+        BrandVerdict(name="Acme CRM", mentioned=True, recommended=True),
+        BrandVerdict(name="HubSpot CRM", mentioned=True, recommended=True),
+    ]))
+    result = llm_module.analyze_with_llm("Pipedrive is a solid pick.", HUBSPOT_ALIAS_CTX)
+    assert result["brand"]["mentioned"] is False
+    assert result["competitors"][1]["mentioned"] is False
+
+
+def test_llm_prompt_skips_empty_and_repeated_names(monkeypatch):
+    ctx = AnalysisContext(
+        brand_name="Acme", aliases=["", "acme", "Acme CRM", "HubSpot"],
+        competitors=[{"id": 1, "name": "HubSpot", "aliases": ["", "Hub Spot", "hubspot"]}], prompt="Best CRM?",
+    )
+    sent = _capture_llm(monkeypatch, AnalysisOutput(brands=[]))
+    llm_module.analyze_with_llm("Acme CRM, Hub Spot and HubSpot are all fine.", ctx)
+    assert "Brands: Acme, Acme CRM, HubSpot, Hub Spot\n" in sent["user"]
+
+
+def test_llm_other_brands_exclude_competitor_aliases(monkeypatch):
+    _capture_llm(monkeypatch, AnalysisOutput(brands=[], other_brands=["HubSpot CRM", "Zoho"]))
+    result = llm_module.analyze_with_llm("HubSpot CRM and Zoho are good picks.", HUBSPOT_ALIAS_CTX)
+    assert result["other_brands"] == ["Zoho"]

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, HttpUrl, field_validator
 
+from app.common.aliases import check_aliases
 from app.providers.models import available_engines
 
 
@@ -17,11 +18,18 @@ class ProjectCreate(BaseModel):
     workspace_id: UUID | None = None
     # Omitted = the default engines.
     engines: list[str] | None = None
+    # Other names for the brand: "Halden CRM" for "Halden".
+    aliases: list[str] | None = None
 
     @field_validator("engines")
     @classmethod
     def _engines(cls, keys: list[str] | None) -> list[str] | None:
         return check_engines(keys)
+
+    @field_validator("aliases")
+    @classmethod
+    def _aliases(cls, values: list[str] | None) -> list[str] | None:
+        return check_aliases(values)
 
 
 class ProjectResponse(BaseModel):
@@ -43,11 +51,18 @@ class ProjectUpdate(BaseModel):
     category: str | None = None
     country: str | None = None
     engines: list[str] | None = None
+    # Other names for the brand: "Halden CRM" for "Halden".
+    aliases: list[str] | None = None
 
     @field_validator("engines")
     @classmethod
     def _engines(cls, keys: list[str] | None) -> list[str] | None:
         return check_engines(keys)
+
+    @field_validator("aliases")
+    @classmethod
+    def _aliases(cls, values: list[str] | None) -> list[str] | None:
+        return check_aliases(values)
 
 
 def check_engines(keys: list[str] | None) -> list[str] | None:

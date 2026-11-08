@@ -23,7 +23,7 @@ class ResponseAnalysisService:
         method = "heuristic"
         other_brands: list[str] = []
         brand = analyze_name(response, context.brand_name, context.aliases)
-        competitors = {c["id"]: analyze_name(response, c["name"]) for c in context.competitors}
+        competitors = {c["id"]: analyze_name(response, c["name"], c.get("aliases")) for c in context.competitors}
 
         if self.use_llm and response.strip():
             try:

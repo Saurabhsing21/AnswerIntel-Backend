@@ -41,10 +41,26 @@ Return JSON: {"brands": [{"name", "mentioned", "recommended", "position", "senti
 covering exactly the listed brands in "brands"."""
 
 
+def _own_names(name: str, aliases: list[str] | None) -> list[str]:
+    """The name and its other names, without blanks or repeats (ignoring case)."""
+    out: list[str] = []
+    for n in [name, *(aliases or [])]:
+        n = n.strip()
+        if n and n.lower() not in {o.lower() for o in out}:
+            out.append(n)
+    return out
+
+
 def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
-    names = [context.brand_name, *[c["name"] for c in context.competitors]]
+    # Each tracked brand with every name it goes by; a verdict under any of them is that brand's verdict.
+    brand_names = _own_names(context.brand_name, context.aliases)
+    competitor_names = {c["id"]: _own_names(c["name"], c.get("aliases")) for c in context.competitors}
+    all_names = [*brand_names, *[n for names in competitor_names.values() for n in names]]
     # Only brands that appear get a verdict (verdict() discards the rest), so asking about the others only costs output tokens.
-    present_names = [n for n in [context.brand_name, *context.aliases, *[c["name"] for c in context.competitors]] if name_pattern(n).search(text)]
+    present_names: list[str] = []
+    for n in all_names:
+        if name_pattern(n).search(text) and n.lower() not in {p.lower() for p in present_names}:
+            present_names.append(n)
     user = (
         f"Question: {context.prompt}\n"
         f"Brands: {', '.join(present_names) or '(none of the tracked brands appear)'}\n\n"
@@ -53,11 +69,15 @@ def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
     output = complete_json(settings.analysis_model, SYSTEM, user, AnalysisOutput)
     by_name = {v.name.strip().lower(): v for v in output.brands}
 
-    def verdict(name: str) -> dict:
-        v = by_name.get(name.lower())
-        present = bool(name_pattern(name).search(text))
-        # Guard against hallucination: a brand absent from the text cannot be mentioned.
-        mentioned = bool(v and v.mentioned and present)
+    def verdict(names: list[str]) -> dict:
+        patterns = [name_pattern(n) for n in names]
+        # Guard against hallucination: a brand none of whose names is in the text cannot be mentioned.
+        present = any(p.search(text) for p in patterns)
+        given = [v for n in names if (v := by_name.get(n.lower()))]
+        claims = [v for v in given if v.mentioned] if present else []
+        # If the model answered under two of its names, the recommending verdict wins.
+        v = max(claims, key=lambda c: c.recommended) if claims else (given[0] if given else None)
+        mentioned = bool(claims)
         return {
             "mentioned": mentioned,
             "recommended": bool(mentioned and v and v.recommended),
@@ -66,10 +86,11 @@ def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
             "reason": v.reason if v else None,
             # Only keep a quote that really is in the answer (LLM output is untrusted).
             "evidence": v.evidence.strip()[:400] if (mentioned and v and v.evidence and v.evidence.strip() in text) else None,
-            "mention_count": len(name_pattern(name).findall(text)),
+            # By where each mention starts, so "HubSpot CRM" counts once for "HubSpot" and "HubSpot CRM".
+            "mention_count": len({m.start() for p in patterns for m in p.finditer(text)}),
         }
 
-    listed = {n.lower() for n in [*names, *context.aliases]}
+    listed = {n.lower() for n in all_names}
     # Untrusted output: keep only names that really appear in the answer and are not already tracked.
     others = []
     for raw in output.other_brands:
@@ -77,7 +98,7 @@ def analyze_with_llm(text: str, context: AnalysisContext) -> dict:
         if name and name.lower() not in listed and name.lower() not in {o.lower() for o in others} and name_pattern(name).search(text):
             others.append(name)
     return {
-        "brand": verdict(context.brand_name),
-        "competitors": {c["id"]: verdict(c["name"]) for c in context.competitors},
+        "brand": verdict(brand_names),
+        "competitors": {cid: verdict(names) for cid, names in competitor_names.items()},
         "other_brands": others,
     }
