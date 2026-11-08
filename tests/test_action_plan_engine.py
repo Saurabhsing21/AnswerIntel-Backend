@@ -101,8 +101,10 @@ def test_every_question_gap_explains_why_and_has_tailored_steps_and_a_success_me
     steps = " ".join(support["evidence"]["steps"])
     assert "customer support page" in steps and "hours" in steps and "moneycontrol.com" in steps
     assert "documentation" in steps or "learning resources" in steps
-    # The most frequent stated reason comes first.
-    assert "Upstox: \"beginner-friendly with simple interface and good support\"" in support["evidence"]["why"][0]
+    # The most frequent stated reason comes first, labelled a summary; only the verified quote is in quotation marks.
+    assert support["evidence"]["why"][0] == (
+        'AI picked Upstox in 2 answers (summary: beginner-friendly with simple interface and good support): "Upstox offers good support."'
+    )
 
 
 def test_impact_is_scaled_by_share_of_answers_lost_not_raw_count():

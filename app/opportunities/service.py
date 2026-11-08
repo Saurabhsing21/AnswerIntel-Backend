@@ -13,6 +13,7 @@ from app.metrics.models import MetricSnapshot
 from app.metrics.service import Observation, load_observations
 from app.metrics.stats import significant
 from app.opportunities.models import Opportunity
+from app.prompts.models import Prompt
 from app.scans.models import Scan
 
 IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -60,6 +61,7 @@ COMPARISON_CATEGORIES = ("COMPARISON", "COMPETITOR")
 QUESTION_GAPS = ("CONTENT_GAP", "COMPETITOR_GAP", "COMPARISON_GAP")
 SWITCH_CATEGORIES = ("ALTERNATIVE", "COMPETITOR")  # "alternatives to {brand}" cannot be won by naming the brand
 HISTORY_SCANS = 2  # earlier full scans a question is judged over: with this one, the last 3
+NEUTRAL_IMPORTANCE = 0.5  # a prompt with no importance set counts as average (the generator's default too)
 
 
 def _impact(share: float) -> str:
@@ -104,9 +106,21 @@ def _by_question(observations: list[Observation]) -> dict[tuple, list[Observatio
     return out
 
 
-def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_lost, history=()) -> list[dict]:
+def _pages(observations: list[Observation], keep=lambda c: True) -> Counter:
+    """How many of these answers cited each exact page."""
+    return Counter((c["url"], c["domain"], c.get("source_type"), c.get("competitor_id"))
+                   for o in observations for c in o.citations if keep(c))
+
+
+def _top_pages(pages: Counter, n: int) -> list[dict]:
+    return [{"url": u, "domain": d, "source_type": t, "competitor_id": cid, "count": k}
+            for (u, d, t, cid), k in pages.most_common(n)]
+
+
+def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_lost, history=(), importance=None) -> list[dict]:
     """One entry per question: how many engines it was lost on, and every competitor AI picked there, with its reason.
-    `history` holds earlier scans' answers by question, so a loss can be checked against them."""
+    `history` holds earlier scans' answers by question, so a loss can be checked against them; `importance` is each
+    prompt's buyer value by prompt id, so the questions worth most come first."""
     by_question: dict[int, list[Observation]] = defaultdict(list)
     for o in rows:
         by_question[o.scan_prompt_id].append(o)
@@ -129,9 +143,12 @@ def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_l
                 if (v.get("reason") or "").strip():
                     w["reasons"][v["reason"].strip().rstrip(".")] += 1
                 w["quote"] = w["quote"] or ((v.get("evidence") or "").strip() or None)
+        value = (importance or {}).get(answers[0].prompt_id)
         out.append({
             "text": answers[0].prompt_text,
             "category": answers[0].category,
+            "importance": NEUTRAL_IMPORTANCE if value is None else value,
+            "response_ids": [o.response_id for o in lost_answers],
             "engines_lost": len(lost_answers),
             "engines_total": len(answers),
             "winners": [
@@ -140,21 +157,28 @@ def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_l
                 for w in sorted(winners.values(), key=lambda w: (-w["engines"], w["name"]))
             ],
             "cited_domains": [d for d, _ in domains.most_common(5)],
+            # Every page AI read for these answers except your own, competitors' included: the steps depend on it.
+            "cited_pages": _top_pages(_pages(lost_answers, lambda c: not c["is_brand_owned"]), 5),
             "scans_lost": 1 + sum(any(lost(o) for o in answers) for answers in past),
             "scans_seen": 1 + len(past),
         })
-    return sorted(out, key=lambda q: (-q["engines_lost"], q["text"]))
+    return sorted(out, key=lambda q: (-q["importance"] * q["engines_lost"], -q["engines_lost"], q["text"]))
 
 
 def _why(questions: list[dict], brand: str) -> list[str]:
-    """2-4 sentences on why AI picked others, from the reasons it gave (most frequent first)."""
+    """2-4 sentences on why AI picked others, from the reasons it gave (most frequent first). The reason is the
+    analysis model's paraphrase, so it is labelled a summary; only the verified quote from the answer is in quotes."""
     reasons: Counter = Counter()
+    quotes: dict[tuple, str] = {}
     for q in questions:
         for w in q["winners"]:
             if w["reason"]:
                 reasons[(w["name"], w["reason"])] += w["engines"]
+                if w["quote"]:
+                    quotes.setdefault((w["name"], w["reason"]), w["quote"])
     why = [
-        f"AI picked {name}: \"{reason}\" ({n} answer{'s' if n != 1 else ''})."
+        f"AI picked {name} in {_plural(n, 'answer')} (summary: {reason})"
+        + (f": \"{quotes[(name, reason)]}\"" if (name, reason) in quotes else ".")
         for (name, reason), n in reasons.most_common(3)
     ]
     lost = sum(q["engines_lost"] for q in questions)
@@ -172,21 +196,42 @@ def _why(questions: list[dict], brand: str) -> list[str]:
     return why[:4]
 
 
-# Topics a founder can act on, spotted in the question or in the reasons AI gave for a competitor.
+# Topics a founder can act on, spotted in the question or in the reasons AI gave for a competitor. Whole words only
+# ("feedback" is not "fee"), and steps any industry can follow.
 TOPICS = [
-    (re.compile(r"support|customer (service|care)|help ?desk|complain|grievance", re.I),
+    (re.compile(r"\b(support|customer (service|care)|help ?desk|complaints?|grievances?)\b", re.I),
      "Publish a customer support page listing every channel (phone, chat, email, in-app), hours, and the response time you commit to."),
-    (re.compile(r"price|pricing|fee|charge|cost|cheap|brokerage|afford", re.I),
+    (re.compile(r"\b(prices?|pricing|priced|fees?|charges?|costs?|cheap|cheaper|cheapest|affordable|afford)\b", re.I),
      "Publish a plain pricing page: every fee in one table, with a worked example of what a typical customer pays."),
-    (re.compile(r"beginner|easy|simple|first[- ]time|new to|interface|user[- ]friendly", re.I),
+    (re.compile(r"\b(beginners?|easy|easiest|simple|first[- ]time|new to|interface|user[- ]friendly)\b", re.I),
      "Publish a beginner's guide that walks a first-time user through sign-up to first use, with screenshots."),
-    (re.compile(r"document|docs|guide|tutorial|learn|educat|research|tools", re.I),
+    (re.compile(r"\b(documentation|documented|docs|guides?|tutorials?|learn|learning|education|educational|research|tools?)\b", re.I),
      "Publish learning resources (guides, tutorials, glossary) on your site and link them from your homepage."),
-    (re.compile(r"safe|secur|trust|regulat|licen|compliance|fraud", re.I),
-     "Publish a trust page with your licences, regulators, security practices and how customer money is protected."),
-    (re.compile(r"review|rating|reputation|popular|largest|users", re.I),
+    (re.compile(r"\b(safe|safety|secure|security|trust|trusted|trustworthy|compliance|compliant|privacy|fraud)\b", re.I),
+     "Publish a trust page: your security practices, certifications, data privacy policy and how you keep customer data safe."),
+    (re.compile(r"\b(reviews?|ratings?|rated|reputation|popular|largest|users)\b", re.I),
      "Show proof AI can quote on your homepage: customer count, ratings with their source, and a named customer result."),
 ]
+
+
+def _source_step(page: dict, brand: str, competitors: dict[int, str]) -> str:
+    """What to do about one page AI cited, by the kind of site it is."""
+    url, domain, kind = page["url"], page["domain"], page["source_type"]
+    competitor = competitors.get(page.get("competitor_id"))
+    if kind == "review_site":
+        return f"Get {brand} reviewed on {domain}: AI cited {url}. Ask happy customers to leave a review there."
+    if kind == "reddit":
+        return f"Answer in the Reddit thread AI cited ({url}): say openly that you work on {brand} and who it is for."
+    if kind == "news":
+        return f"Pitch the author of the article AI cited ({url}) with a story or data about {brand}."
+    if kind == "directory":
+        return f"Submit a listing for {brand} on {domain}: AI cited {url}."
+    if kind in ("comparison", "blog"):
+        return f"Ask the author of {url} to add {brand} to that page: AI cited it in these answers."
+    if kind == "competitor_website":
+        rival = competitor or "that competitor"
+        return f"Publish a page comparing {brand} with {rival}: AI used {rival}'s own page ({url}) in these answers."
+    return f"Ask {domain} to mention {brand} on the page AI cited: {url}."
 
 
 def _steps(kind: str, category: str, questions: list[dict], brand: str, competitors: dict[int, str]) -> list[str]:
@@ -221,10 +266,16 @@ def _steps(kind: str, category: str, questions: list[dict], brand: str, competit
         for w in q["winners"]:
             if w["reason"] and w["reason"] not in seen_reasons and len(seen_reasons) < 2:
                 seen_reasons.add(w["reason"])
-                steps.append(f'AI credits {w["name"]} for "{w["reason"]}": show, with specifics, how {brand} does this on the new page.')
-    domains = Counter(d for q in questions for d in q["cited_domains"])
-    if domains:
-        steps.append(f"Get {brand} listed or reviewed on {', '.join(d for d, _ in domains.most_common(3))}: AI cited them in these answers.")
+                steps.append(f"AI credits {w['name']} for this (summary: {w['reason']}): show, with specifics, how {brand} does it on the new page.")
+    pages: Counter = Counter()
+    for q in questions:
+        for p in q.get("cited_pages", []):
+            pages[(p["url"], p["domain"], p["source_type"], p["competitor_id"])] += p["count"]
+    for page in _top_pages(pages, 3):
+        competitor = competitors.get(page["competitor_id"])
+        if competitor and any(f"-vs-{_slug(competitor)}:" in step for step in steps):
+            continue  # the comparison page for that competitor is already a step
+        steps.append(_source_step(page, brand, competitors))
     steps.append(f"Add an FAQ block to the new page(s) with each question as a heading and a two-sentence answer naming {brand}, marked up as FAQPage JSON-LD.")
     steps.append("Link the new page(s) from your homepage and main navigation so AI crawlers find it.")
     if len(steps) < 5:
@@ -243,6 +294,7 @@ def _question_gap(kind: str, category: str, questions: list[dict], brand: str, c
     """A gap is confirmed once one of its questions was lost in 2 of the scans it was asked in; its confidence is
     the share of its (question, scan) pairs that were lost, so one unlucky run cannot read as certain."""
     lost = sum(q["engines_lost"] for q in questions)
+    weighted = round(sum(q["importance"] * q["engines_lost"] for q in questions), 2)
     top = max(questions, key=lambda q: (q["scans_lost"], q["scans_lost"] / q["scans_seen"], q["engines_lost"] / q["engines_total"]))
     return {
         "type": kind, "title": title, "description": description, "recommended_action": action,
@@ -250,7 +302,7 @@ def _question_gap(kind: str, category: str, questions: list[dict], brand: str, c
         "confidence": round(min(0.95, sum(q["scans_lost"] for q in questions) / sum(q["scans_seen"] for q in questions)), 2),
         "evidence": {
             "category": category, "prompts": [q["text"] for q in questions][:10], "questions": questions,
-            "answers_lost": lost, "confirmed": any(q["scans_lost"] >= 2 for q in questions),
+            "answers_lost": lost, "weighted_answers_lost": weighted, "confirmed": any(q["scans_lost"] >= 2 for q in questions),
             "consistency": (f"Lost in {top['scans_lost']} of {_plural(top['scans_seen'], 'scan')}, "
                             f"on {top['engines_lost']} of {_plural(top['engines_total'], 'engine')}"),
             "why": _why(questions, brand),
@@ -272,9 +324,10 @@ def switching(observations: list[Observation], brand: str, competitors: dict[int
 
 def detect(
     observations: list[Observation], brand: str, competitors: dict[int, str], audit: dict | None = None,
-    history: list[list[Observation]] | None = None,
+    history: list[list[Observation]] | None = None, importance: dict[int, float | None] | None = None,
 ) -> list[dict]:
-    """This scan's gaps. `history` is the answers of earlier full scans (newest first), to confirm lost questions."""
+    """This scan's gaps. `history` is the answers of earlier full scans (newest first), to confirm lost questions;
+    `importance` is each prompt's buyer value by prompt id (missing or None counts as average)."""
     found: list[dict] = []
     past = [_by_question(scan) for scan in history or []]
     prompts = {o.scan_prompt_id: o.prompt_text for o in observations}
@@ -295,7 +348,7 @@ def detect(
         if len({o.scan_prompt_id for o in rows}) >= 2 and not any(o.brand["mentioned"] for o in rows):
             invisible.add(category)
             label = CATEGORY_LABELS.get(category, category.lower())
-            questions = _question_rows(rows, competitors, lost=lambda o: not o.brand["mentioned"], history=past)
+            questions = _question_rows(rows, competitors, lost=lambda o: not o.brand["mentioned"], history=past, importance=importance)
             found.append(_question_gap(
                 "CONTENT_GAP", category, questions, brand, competitors, total_answers, engines,
                 f"You are invisible on {label} questions",
@@ -307,7 +360,7 @@ def detect(
     for category, rows in sorted(by_category.items()):
         if category in invisible:
             continue
-        questions = _question_rows(rows, competitors, history=past)
+        questions = _question_rows(rows, competitors, history=past, importance=importance)
         if not questions:
             continue
         lost = sum(q["engines_lost"] for q in questions)
@@ -340,6 +393,9 @@ def detect(
             comp_domains.update(third_party)
     missing = [(d, n) for d, n in comp_domains.most_common() if d not in brand_domains and n >= 2]
     if missing:
+        lost_to_rivals = [o for o in winnable if not o.brand["mentioned"] and any(v.get("recommended") for v in o.competitors.values())]
+        sources = {d for d, _ in missing}
+        pages = _pages(lost_to_rivals, lambda c: c["domain"] in sources and not c["is_brand_owned"] and not c["competitor_id"])
         found.append({
             "type": "CITATION_GAP",
             "title": f"{_plural(len(missing), 'source')} AI cites for competitors never cite{'s' if len(missing) == 1 else ''} you",
@@ -347,7 +403,10 @@ def detect(
             "recommended_action": "Get listed, reviewed, or mentioned on these sources, starting with the most cited.",
             "impact": _impact(sum(n for _, n in missing) / total_answers if total_answers else 0),
             "confidence": _confidence(sum(n for _, n in missing)),
-            "evidence": {"domains": [{"domain": d, "citations": n} for d, n in missing[:8]]},
+            "evidence": {
+                "domains": [{"domain": d, "citations": n} for d, n in missing[:8]],
+                "pages": [{k: p[k] for k in ("url", "domain", "source_type", "count")} for p in _top_pages(pages, 8)],
+            },
         })
 
     # POSITIONING_GAP: mentioned often, recommended rarely.
@@ -439,9 +498,11 @@ def detect(
 
 
 def rank(impact: str, evidence: dict, confidence: float) -> tuple:
-    """Order of gaps: biggest impact first, then confirmed before unconfirmed, then size, then confidence.
-    Gaps not judged across scans (citations, site audit...) are not held back."""
-    return (IMPACT_ORDER.get(impact, 9), not evidence.get("confirmed", True), -_weight(evidence), -confidence)
+    """Order of gaps: biggest impact first, then confirmed before unconfirmed, then what the lost answers were worth
+    to buyers (answers lost weighted by each question's importance), then confidence. Gaps not judged across scans
+    (citations, site audit...) are not held back and are sized by how many items they list."""
+    size = evidence["weighted_answers_lost"] if "weighted_answers_lost" in evidence else _weight(evidence)
+    return (IMPACT_ORDER.get(impact, 9), not evidence.get("confirmed", True), -size, -confidence)
 
 
 EFFORT = {"TECHNICAL_GAP": "S", "POSITIONING_GAP": "S", "UNTRACKED_COMPETITOR": "S", "ENTITY_GAP": "M", "CITATION_GAP": "M",
@@ -460,9 +521,7 @@ def _add_steps(found: list[dict], observations: list[Observation], brand: str) -
             continue
         steps: list[str] = []
         if kind == "CITATION_GAP":
-            for d in ev.get("domains", [])[:5]:
-                steps.append(f"Get {brand} listed on {d['domain']}: ask for a review, submit a listing, or pitch the author ({d['citations']} citations).")
-            steps.append("Start with the most cited source: find the exact page AI cited and ask to be added to it.")
+            steps.extend(_source_step(page, brand, {}) for page in ev.get("pages", [])[:5])  # most cited page first
             steps.append(f"Give each source the same one-line description of {brand} and a link to your homepage.")
             ev["why"] = [f"AI cited {d['domain']} {_plural(d['citations'], 'time')} in answers that recommended a competitor and left {brand} out."
                          for d in ev.get("domains", [])[:4]]
@@ -569,6 +628,9 @@ def generate_and_store(
         .order_by(MetricSnapshot.scan_id.desc()).limit(HISTORY_SCANS)
     ).all()
     history = [load_observations(session, scan_id) for scan_id in earlier]
+    # Scan prompts do not copy importance: read it from the prompts they came from.
+    prompt_ids = {o.prompt_id for o in observations if o.prompt_id is not None}
+    importance = dict(session.execute(select(Prompt.id, Prompt.importance).where(Prompt.id.in_(prompt_ids))).all()) if prompt_ids else {}
     session.execute(delete(Opportunity).where(Opportunity.scan_id == scan.id))
     previous_scan = session.scalar(
         select(func.max(Opportunity.scan_id)).where(Opportunity.project_id == scan.project_id, Opportunity.scan_id < scan.id)
@@ -582,7 +644,7 @@ def generate_and_store(
     previous = {fp: o for fp, o in previous.items() if fp.split(":", 1)[0].upper() not in QUESTION_GAPS}
 
     rows = []
-    for item in detect(observations, brand, competitors, audit, history=history):
+    for item in detect(observations, brand, competitors, audit, history=history, importance=importance):
         fp = fingerprint(item)
         old = previous.pop(fp, None)
         row = Opportunity(project_id=scan.project_id, scan_id=scan.id, fingerprint=fp, **item)

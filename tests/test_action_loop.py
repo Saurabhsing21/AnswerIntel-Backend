@@ -126,12 +126,14 @@ def test_competitor_steps_name_the_page_and_the_domains_behind_the_answer():
             response_id=i, engine="chatgpt", scan_prompt_id=i, prompt_id=i, prompt_text=f"best crm {i}", category="CATEGORY",
             brand={"mentioned": mentioned, "recommended": False, "position": None, "sentiment": None},
             competitors={7: {"mentioned": True, "recommended": comp_rec, "position": 1, "sentiment": "positive"}},
-            citations=[{"domain": d, "is_brand_owned": False, "competitor_id": None} for d in domains],
+            citations=[{"url": f"https://{d}/crm", "domain": d, "source_type": "review_site" if d == "g2.com" else "blog",
+                        "is_brand_owned": False, "competitor_id": None} for d in domains],
         )
     found = detect([obs(0, True, False, [])] + [obs(i, False, True, ["g2.com", "zapier.com"]) for i in range(1, 4)], "Halden", {7: "Kiteline"})
     gap = next(f for f in found if f["type"] == "COMPETITOR_GAP")
     steps = " ".join(gap["evidence"]["steps"])
-    assert "category discovery guide" in steps and '"best crm 1"' in steps and "g2.com" in steps and gap["evidence"]["effort"] == "M"
+    assert "category discovery guide" in steps and '"best crm 1"' in steps and gap["evidence"]["effort"] == "M"
+    assert "Get Halden reviewed on g2.com: AI cited https://g2.com/crm" in steps and "https://zapier.com/crm" in steps
 
 
 def test_first_scan_sends_a_ready_email_once(client, outbox):
