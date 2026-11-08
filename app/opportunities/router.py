@@ -22,7 +22,7 @@ from app.opportunities.draft import draft_for
 from app.opportunities.models import Opportunity
 from app.competitors.models import Competitor
 from app.metrics.service import load_observations
-from app.opportunities.service import AREAS, IMPACT_ORDER, status_summary
+from app.opportunities.service import AREAS, rank, status_summary
 from app.users.models import User
 
 router = APIRouter(prefix="/projects/{project_id}/opportunities", tags=["Opportunities"])
@@ -70,7 +70,7 @@ def list_opportunities(
         query = select(Opportunity).where(Opportunity.project_id == project.id, Opportunity.scan_id == scan_id)
         if status:
             query = query.where(Opportunity.status == status)
-        rows = sorted(session.scalars(query).all(), key=lambda o: (IMPACT_ORDER.get(o.impact, 9), -o.confidence))
+        rows = sorted(session.scalars(query).all(), key=lambda o: rank(o.impact, o.evidence, o.confidence))
         if entitlements(session, project.workspace_id).pro:
             items = [serialize(o) for o in rows]
         else:

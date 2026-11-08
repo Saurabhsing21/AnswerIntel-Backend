@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from app.analysis.heuristic import name_pattern
 from app.competitors.models import Competitor
-from app.metrics.service import Observation
+from app.metrics.models import MetricSnapshot
+from app.metrics.service import Observation, load_observations
+from app.metrics.stats import significant
 from app.opportunities.models import Opportunity
 from app.scans.models import Scan
 
@@ -57,6 +59,7 @@ BRANDED_CATEGORIES = ("COMPARISON", "COMPETITOR", "ALTERNATIVE")
 COMPARISON_CATEGORIES = ("COMPARISON", "COMPETITOR")
 QUESTION_GAPS = ("CONTENT_GAP", "COMPETITOR_GAP", "COMPARISON_GAP")
 SWITCH_CATEGORIES = ("ALTERNATIVE", "COMPETITOR")  # "alternatives to {brand}" cannot be won by naming the brand
+HISTORY_SCANS = 2  # earlier full scans a question is judged over: with this one, the last 3
 
 
 def _impact(share: float) -> str:
@@ -89,8 +92,21 @@ def _lost(o: Observation) -> bool:
     return not o.brand["recommended"] if o.category in COMPARISON_CATEGORIES else not o.brand["mentioned"]
 
 
-def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_lost) -> list[dict]:
-    """One entry per question: how many engines it was lost on, and every competitor AI picked there, with its reason."""
+def _key(o: Observation) -> tuple:
+    """The same question across scans: scan prompts are per-scan copies, the prompt they came from is not."""
+    return ("prompt", o.prompt_id) if o.prompt_id is not None else ("text", o.prompt_text.strip().lower())
+
+
+def _by_question(observations: list[Observation]) -> dict[tuple, list[Observation]]:
+    out: dict[tuple, list[Observation]] = defaultdict(list)
+    for o in observations:
+        out[_key(o)].append(o)
+    return out
+
+
+def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_lost, history=()) -> list[dict]:
+    """One entry per question: how many engines it was lost on, and every competitor AI picked there, with its reason.
+    `history` holds earlier scans' answers by question, so a loss can be checked against them."""
     by_question: dict[int, list[Observation]] = defaultdict(list)
     for o in rows:
         by_question[o.scan_prompt_id].append(o)
@@ -99,6 +115,8 @@ def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_l
         lost_answers = [o for o in answers if lost(o)]
         if not lost_answers:
             continue
+        key = _key(answers[0])
+        past = [scan[key] for scan in history if key in scan]
         winners: dict[int, dict] = {}
         domains: Counter = Counter()
         for o in lost_answers:
@@ -122,6 +140,8 @@ def _question_rows(rows: list[Observation], competitors: dict[int, str], lost=_l
                 for w in sorted(winners.values(), key=lambda w: (-w["engines"], w["name"]))
             ],
             "cited_domains": [d for d, _ in domains.most_common(5)],
+            "scans_lost": 1 + sum(any(lost(o) for o in answers) for answers in past),
+            "scans_seen": 1 + len(past),
         })
     return sorted(out, key=lambda q: (-q["engines_lost"], q["text"]))
 
@@ -220,14 +240,20 @@ def _success_metric(questions: list[dict], brand: str, engines: int) -> str:
 
 def _question_gap(kind: str, category: str, questions: list[dict], brand: str, competitors: dict[int, str],
                   total_answers: int, engines: int, title: str, description: str, action: str) -> dict:
+    """A gap is confirmed once one of its questions was lost in 2 of the scans it was asked in; its confidence is
+    the share of its (question, scan) pairs that were lost, so one unlucky run cannot read as certain."""
     lost = sum(q["engines_lost"] for q in questions)
+    top = max(questions, key=lambda q: (q["scans_lost"], q["scans_lost"] / q["scans_seen"], q["engines_lost"] / q["engines_total"]))
     return {
         "type": kind, "title": title, "description": description, "recommended_action": action,
         "impact": _impact(lost / total_answers if total_answers else 0),
-        "confidence": _confidence(lost),
+        "confidence": round(min(0.95, sum(q["scans_lost"] for q in questions) / sum(q["scans_seen"] for q in questions)), 2),
         "evidence": {
             "category": category, "prompts": [q["text"] for q in questions][:10], "questions": questions,
-            "answers_lost": lost, "why": _why(questions, brand),
+            "answers_lost": lost, "confirmed": any(q["scans_lost"] >= 2 for q in questions),
+            "consistency": (f"Lost in {top['scans_lost']} of {_plural(top['scans_seen'], 'scan')}, "
+                            f"on {top['engines_lost']} of {_plural(top['engines_total'], 'engine')}"),
+            "why": _why(questions, brand),
             "steps": _steps(kind, category, questions, brand, competitors),
             "success_metric": _success_metric(questions, brand, engines),
         },
@@ -245,9 +271,12 @@ def switching(observations: list[Observation], brand: str, competitors: dict[int
 
 
 def detect(
-    observations: list[Observation], brand: str, competitors: dict[int, str], audit: dict | None = None
+    observations: list[Observation], brand: str, competitors: dict[int, str], audit: dict | None = None,
+    history: list[list[Observation]] | None = None,
 ) -> list[dict]:
+    """This scan's gaps. `history` is the answers of earlier full scans (newest first), to confirm lost questions."""
     found: list[dict] = []
+    past = [_by_question(scan) for scan in history or []]
     prompts = {o.scan_prompt_id: o.prompt_text for o in observations}
     total_prompts = len(prompts)
     total_answers = len(observations)
@@ -266,7 +295,7 @@ def detect(
         if len({o.scan_prompt_id for o in rows}) >= 2 and not any(o.brand["mentioned"] for o in rows):
             invisible.add(category)
             label = CATEGORY_LABELS.get(category, category.lower())
-            questions = _question_rows(rows, competitors, lost=lambda o: not o.brand["mentioned"])
+            questions = _question_rows(rows, competitors, lost=lambda o: not o.brand["mentioned"], history=past)
             found.append(_question_gap(
                 "CONTENT_GAP", category, questions, brand, competitors, total_answers, engines,
                 f"You are invisible on {label} questions",
@@ -278,7 +307,7 @@ def detect(
     for category, rows in sorted(by_category.items()):
         if category in invisible:
             continue
-        questions = _question_rows(rows, competitors)
+        questions = _question_rows(rows, competitors, history=past)
         if not questions:
             continue
         lost = sum(q["engines_lost"] for q in questions)
@@ -406,7 +435,13 @@ def detect(
         item["evidence"]["expected_objective"] = OBJECTIVES[item["type"]]
         item["evidence"]["effort"] = EFFORT[item["type"]]
 
-    return sorted(found, key=lambda x: (IMPACT_ORDER[x["impact"]], -_weight(x["evidence"]), -x["confidence"]))
+    return sorted(found, key=lambda x: rank(x["impact"], x["evidence"], x["confidence"]))
+
+
+def rank(impact: str, evidence: dict, confidence: float) -> tuple:
+    """Order of gaps: biggest impact first, then confirmed before unconfirmed, then size, then confidence.
+    Gaps not judged across scans (citations, site audit...) are not held back."""
+    return (IMPACT_ORDER.get(impact, 9), not evidence.get("confirmed", True), -_weight(evidence), -confidence)
 
 
 EFFORT = {"TECHNICAL_GAP": "S", "POSITIONING_GAP": "S", "UNTRACKED_COMPETITOR": "S", "ENTITY_GAP": "M", "CITATION_GAP": "M",
@@ -476,9 +511,13 @@ EFFORT_ORDER = {"S": 0, "M": 1, "L": 2}
 
 
 def weekly_plan(rows: list[Opportunity]) -> list[Opportunity]:
-    """This week's 3 actions: the biggest gaps first, quick wins before big projects. Done ones stay, to show progress."""
+    """This week's 3 actions: gaps seen this scan before ones that just went missing, the biggest first, confirmed
+    before unconfirmed, quick wins before big projects. Done ones stay, to show progress."""
     live = [o for o in rows if o.trend != "resolved" and o.status != "dismissed"]
-    return sorted(live, key=lambda o: (IMPACT_ORDER[o.impact], EFFORT_ORDER.get(o.evidence.get("effort"), 1), -o.confidence))[:3]
+    return sorted(live, key=lambda o: (
+        o.trend == "improving", IMPACT_ORDER[o.impact], not o.evidence.get("confirmed", True),
+        EFFORT_ORDER.get(o.evidence.get("effort"), 1), -o.confidence, o.id,  # ties keep the order they were stored in
+    ))[:3]
 
 
 def fingerprint(item: dict) -> str:
@@ -497,12 +536,39 @@ def _weight(evidence: dict) -> int:
     return len(evidence.get("prompts") or evidence.get("domains") or evidence.get("brands") or evidence.get("findings") or [])
 
 
+def _answers(evidence: dict) -> int:
+    return sum(q.get("engines_total", 0) for q in evidence.get("questions") or [])
+
+
+def _change(old: Opportunity, item: dict) -> str:
+    """better / worse only when the change is bigger than run-to-run noise. Question gaps compare the share of
+    their answers that was lost; other gaps their impact and how many items they list."""
+    if "answers_lost" in old.evidence and "answers_lost" in item["evidence"]:
+        n_before, n_now = _answers(old.evidence), _answers(item["evidence"])
+        before = old.evidence["answers_lost"] / n_before if n_before else None
+        now = item["evidence"]["answers_lost"] / n_now if n_now else None
+        if significant(before, n_before, now, n_now):
+            return "worse" if now > before else "better"
+        return "open"
+    before, now = _weight(old.evidence), _weight(item["evidence"])
+    worse = IMPACT_ORDER[item["impact"]] < IMPACT_ORDER[old.impact] or now > before
+    better = IMPACT_ORDER[item["impact"]] > IMPACT_ORDER[old.impact] or now < before
+    return "worse" if worse else "better" if better else "open"
+
+
 def generate_and_store(
     session: Session, scan: Scan, brand: str, observations: list[Observation], audit: dict | None = None
 ) -> list[Opportunity]:
     """Stores this scan's opportunities, carrying each one's status and history from the previous scan.
-    Gaps that disappeared are stored as "resolved", so the user sees what their work fixed."""
+    A gap missing once is stored as "improving"; missing two scans in a row, as "resolved", so the user sees what
+    their work fixed and one lucky run does not close a gap."""
     competitors = {c.id: c.name for c in session.scalars(select(Competitor).where(Competitor.project_id == scan.project_id))}
+    # Only full scans get a snapshot, so these are the earlier full scans, newest first.
+    earlier = session.scalars(
+        select(MetricSnapshot.scan_id).where(MetricSnapshot.project_id == scan.project_id, MetricSnapshot.scan_id < scan.id)
+        .order_by(MetricSnapshot.scan_id.desc()).limit(HISTORY_SCANS)
+    ).all()
+    history = [load_observations(session, scan_id) for scan_id in earlier]
     session.execute(delete(Opportunity).where(Opportunity.scan_id == scan.id))
     previous_scan = session.scalar(
         select(func.max(Opportunity.scan_id)).where(Opportunity.project_id == scan.project_id, Opportunity.scan_id < scan.id)
@@ -516,29 +582,28 @@ def generate_and_store(
     previous = {fp: o for fp, o in previous.items() if fp.split(":", 1)[0].upper() not in QUESTION_GAPS}
 
     rows = []
-    for item in detect(observations, brand, competitors, audit):
+    for item in detect(observations, brand, competitors, audit, history=history):
         fp = fingerprint(item)
         old = previous.pop(fp, None)
         row = Opportunity(project_id=scan.project_id, scan_id=scan.id, fingerprint=fp, **item)
         if old is None:
             row.trend, row.first_seen_scan_id = "new", scan.id
         else:
-            before, now = _weight(old.evidence), _weight(item["evidence"])
-            worse = IMPACT_ORDER[item["impact"]] < IMPACT_ORDER[old.impact] or now > before
-            better = IMPACT_ORDER[item["impact"]] > IMPACT_ORDER[old.impact] or now < before
-            row.trend = "worse" if worse else "better" if better else "open"
+            before = _weight(old.evidence)
+            row.trend = _change(old, item)
             row.status = "open" if old.status == "completed" else old.status  # marked done but still there: back on the list
             row.first_seen_scan_id = old.first_seen_scan_id or old.scan_id
             row.experiment_id = old.experiment_id
             row.evidence = {**item["evidence"], "previous_count": before,
                             **({"retest": old.evidence["retest"]} if "retest" in old.evidence else {})}
         rows.append(row)
-    for fp, old in previous.items():  # gone this scan: fixed
+    for fp, old in previous.items():  # gone this scan: improving; gone two scans in a row: fixed
+        resolved = old.trend == "improving"
         rows.append(Opportunity(
             project_id=scan.project_id, scan_id=scan.id, fingerprint=fp, type=old.type, title=old.title,
             description=old.description, recommended_action=old.recommended_action, impact=old.impact,
-            confidence=old.confidence, evidence=old.evidence, trend="resolved",
-            status="dismissed" if old.status == "dismissed" else "completed",
+            confidence=old.confidence, evidence=old.evidence, trend="resolved" if resolved else "improving",
+            status=("dismissed" if old.status == "dismissed" else "completed") if resolved else old.status,
             first_seen_scan_id=old.first_seen_scan_id or old.scan_id, experiment_id=old.experiment_id,
         ))
     session.add_all(rows)

@@ -17,7 +17,7 @@ from app.metrics.models import CompetitorMetric, MetricSnapshot
 from app.metrics.service import load_observations
 from app.opportunities.models import Opportunity
 from app.opportunities.router import serialize as serialize_opportunity
-from app.opportunities.service import BRANDED_CATEGORIES, IMPACT_ORDER, weekly_plan
+from app.opportunities.service import BRANDED_CATEGORIES, rank, weekly_plan
 from app.prompts.models import Prompt, ScanPrompt
 from app.providers.models import DISPLAY_NAMES
 from app.providers.response_model import AIResponseRecord
@@ -124,7 +124,7 @@ def build_dashboard(session, project) -> dict:
     plan = weekly_plan(current)
     opportunities = sorted(
         [o for o in current if o.status in ("open", "in_progress") and o.trend != "resolved"],
-        key=lambda o: (IMPACT_ORDER.get(o.impact, 9), -o.confidence),
+        key=lambda o: rank(o.impact, o.evidence, o.confidence),
     )[:5]
 
     recent = session.execute(

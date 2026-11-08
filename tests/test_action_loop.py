@@ -39,7 +39,7 @@ def test_status_and_trend_carry_across_scans(client):
     assert kept["first_seen_scan_id"] == dismissed["scan_id"]
 
 
-def test_a_gap_that_disappears_is_reported_as_resolved(client):
+def test_a_gap_that_disappears_twice_is_reported_as_resolved(client):
     from app.opportunities import service
 
     headers = signup(client, "resolved")
@@ -47,13 +47,18 @@ def test_a_gap_that_disappears_is_reported_as_resolved(client):
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
     real, first = service.detect, []
     try:
-        # Simulated answers vary between scans, so the second scan replays the first one's gaps minus the top one.
+        # Simulated answers vary between scans, so later scans replay the first one's gaps minus the top one.
         service.detect = lambda *a, **k: first.extend(real(*a, **k)) or list(first)
         scan_and_wait(client, headers, project_id)
         service.detect = lambda *a, **k: [dict(x, evidence=dict(x["evidence"])) for x in first[1:]]
         scan_and_wait(client, headers, project_id)
+        once = opportunities(client, headers, project_id)
+        scan_and_wait(client, headers, project_id)
     finally:
         service.detect = real
+    # Missing from one scan is not proof of a fix: it is improving, and keeps its status.
+    assert [(o["title"], o["status"]) for o in once if o["trend"] in ("improving", "resolved")] == [(first[0]["title"], "open")]
+    assert next(o for o in once if o["title"] == first[0]["title"])["trend"] == "improving"
     after = opportunities(client, headers, project_id)
     resolved = [o for o in after if o["trend"] == "resolved"]
     assert [o["title"] for o in resolved] == [first[0]["title"]] and resolved[0]["status"] == "completed"

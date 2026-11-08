@@ -17,8 +17,9 @@ OPPORTUNITY_TYPES = (
     "UNTRACKED_COMPETITOR",
 )
 OPPORTUNITY_STATUSES = ("open", "in_progress", "completed", "dismissed")
-# new: first seen this scan; open: same as last scan; better/worse: fewer/more answers or items affected; resolved: gone this scan.
-OPPORTUNITY_TRENDS = ("new", "open", "better", "worse", "resolved")
+# new: first seen this scan; open: same as last scan; better/worse: fewer/more answers or items affected;
+# improving: missing this scan only; resolved: missing two scans in a row.
+OPPORTUNITY_TRENDS = ("new", "open", "better", "worse", "improving", "resolved")
 
 
 class Opportunity(Base):
