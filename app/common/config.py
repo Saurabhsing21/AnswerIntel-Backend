@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     waitlist_rate_limit_per_minute: int = 10  # per IP; the endpoint is public
     # Empty = run scans in-process (local dev). Set = Celery workers on Redis (PRD 56).
     redis_url: str = ""
+    # Single-server production (no Redis/Celery): scans run in the API process. Opt in explicitly so a real
+    # production deploy does not fall back to in-process by accident. Weekly scans then need an external cron.
+    run_scans_in_process: bool = False
 
     raw_response_retention_days: int = 730  # ceiling; each plan keeps less or equal (PRD 88). Aggregates are kept
 
@@ -128,8 +131,12 @@ class Settings(BaseSettings):
             raise ValueError("OPENROUTER_API_KEY is required when APP_ENV=production (unless WAITLIST_ONLY=true).")
         # Without a queue, scans run inside the API process: a deploy or restart cuts them off, and their retry waits
         # hold the API's threads. The waitlist-only site runs no scans.
-        if self.app_env == "production" and not self.waitlist_only and not self.redis_url.strip():
-            raise ValueError("REDIS_URL is required when APP_ENV=production (unless WAITLIST_ONLY=true).")
+        if (self.app_env == "production" and not self.waitlist_only
+                and not self.redis_url.strip() and not self.run_scans_in_process):
+            raise ValueError(
+                "In production set REDIS_URL (Celery workers) or RUN_SCANS_IN_PROCESS=true (single server), "
+                "unless WAITLIST_ONLY=true."
+            )
         return self
 
     @property

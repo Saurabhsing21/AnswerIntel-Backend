@@ -1,0 +1,69 @@
+# Render Blueprint for the SeenLens backend (API). Build is the repo's Dockerfile (Python + Node + PDF renderer).
+# One free web service, no Redis/Celery: scans run in-process (RUN_SCANS_IN_PROCESS=true). Weekly scans and
+# cleanup are triggered by an external cron (GitHub Actions) hitting the app; the free service is kept awake by a
+# pinger. Secrets (sync: false) are set in the Render dashboard, not committed here.
+services:
+  - type: web
+    name: seenlens-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    # Apply DB migrations on every start (idempotent), then serve on the port Render provides.
+    dockerCommand: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers"
+    envVars:
+      # --- non-secret config (safe to commit) ---
+      - key: APP_ENV
+        value: production
+      - key: RUN_SCANS_IN_PROCESS
+        value: "true"
+      - key: WAITLIST_ONLY
+        value: "false"
+      - key: FREE_CHECK_ENABLED
+        value: "false"
+      - key: SCAN_CONCURRENCY
+        value: "2"            # 512MB free instance: keep concurrency low so a scan does not run out of memory
+      # --- secrets: set these in the Render dashboard ---
+      - key: DATABASE_URL            # Neon pooled connection string
+        sync: false
+      - key: DATABASE_URL_UNPOOLED   # Neon direct connection string
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: PROXY_SHARED_SECRET     # must match the same value on Vercel
+        sync: false
+      - key: OPENROUTER_API_KEY      # a FUNDED key
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: CORS_ORIGINS            # your Vercel frontend URL, e.g. https://seenlens.vercel.app
+        sync: false
+      - key: APP_BASE_URL            # same Vercel URL (Stripe return + email links)
+        sync: false
+      # --- optional: leave unset to disable the feature ---
+      - key: RESEND_AUDIENCE_ID      # waitlist
+        sync: false
+      - key: GOOGLE_CLIENT_ID        # Google sign-in
+        sync: false
+      - key: SENTRY_DSN              # error monitoring
+        sync: false
+      - key: STRIPE_SECRET_KEY       # billing (all 8 Stripe vars optional until you sell plans)
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_STARTER_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_STARTER_YEARLY
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_GROWTH_YEARLY
+        sync: false
+      - key: STRIPE_PRICE_PRO_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_PRO_YEARLY
+        sync: false
