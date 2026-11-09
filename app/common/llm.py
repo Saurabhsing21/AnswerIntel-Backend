@@ -59,7 +59,7 @@ def chat(
 
     headers = {
         "Authorization": f"Bearer {settings.openrouter_api_key}",
-        "HTTP-Referer": "https://seenlens.com",
+        "HTTP-Referer": "https://seenlense.com",
         "X-Title": "SeenLens",
     }
     max_retries = settings.provider_max_retries if retries is None else retries

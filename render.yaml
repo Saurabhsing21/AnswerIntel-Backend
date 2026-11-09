@@ -40,7 +40,7 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
-      - key: CORS_ORIGINS            # your Vercel frontend URL, e.g. https://seenlens.vercel.app
+      - key: CORS_ORIGINS            # your Vercel frontend URL, e.g. https://seenlense.com
         sync: false
       - key: APP_BASE_URL            # same Vercel URL (Stripe return + email links)
         sync: false
