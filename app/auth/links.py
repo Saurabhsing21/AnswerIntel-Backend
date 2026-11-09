@@ -80,8 +80,8 @@ def send(to: str, subject: str, html: str) -> None:
 
 def send_reset(user: User) -> None:
     url = link("/reset-password", reset_token(user))
-    send(user.email, "Reset your SeenLens password", render(
-        "Reset your password", "Someone asked to reset the password for this SeenLens account.",
+    send(user.email, "Reset your SeenLense password", render(
+        "Reset your password", "Someone asked to reset the password for this SeenLense account.",
         "Choose a new password", url, f"The link works once and expires in {RESET_MINUTES} minutes. If this wasn't you, ignore this email.",
     ))
 
@@ -90,8 +90,8 @@ def send_verification(user: User, email: str | None = None) -> None:
     target = email or user.email
     url = link("/verify-email", verify_token(user, target))
     changing = target.lower() != user.email.lower()
-    send(target, "Confirm your email for SeenLens", render(
+    send(target, "Confirm your email for SeenLense", render(
         "Confirm your email",
-        "Confirm this is your new SeenLens login email." if changing else "Confirm your email so we can send your reports and alerts.",
-        "Confirm email", url, f"The link expires in {VERIFY_DAYS} days. If you didn't sign up for SeenLens, ignore this email.",
+        "Confirm this is your new SeenLense login email." if changing else "Confirm your email so we can send your reports and alerts.",
+        "Confirm email", url, f"The link expires in {VERIFY_DAYS} days. If you didn't sign up for SeenLense, ignore this email.",
     ))

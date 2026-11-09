@@ -1,4 +1,4 @@
-"""The one HTML layout every SeenLens email uses: wordmark, card with a lime top edge, optional stats and list, one button.
+"""The one HTML layout every SeenLense email uses: wordmark, card with a lime top edge, optional stats and list, one button.
 
 Tables and inline styles only, so it renders the same in Gmail, Outlook and Apple Mail; the <style> block only adds
 dark mode where the client supports it. Shape rule: the card is 16px, the button is a pill. Every value is escaped here.
@@ -102,7 +102,7 @@ def email_html(
 <td><table role="presentation" cellpadding="0" cellspacing="0"><tr>
 <td width="22" height="22" style="background:{INK};border-radius:6px" align="center" valign="middle">
 <div style="width:8px;height:8px;border-radius:2px;background:{MARK};font-size:0;line-height:0">&nbsp;</div></td>
-<td class="ink" style="padding-left:8px;font-size:16px;font-weight:700;letter-spacing:-0.02em;color:{INK}">SeenLens</td>
+<td class="ink" style="padding-left:8px;font-size:16px;font-weight:700;letter-spacing:-0.02em;color:{INK}">SeenLense</td>
 </tr></table></td>{context}</tr></table></td></tr>
 <tr><td class="card" style="background:#ffffff;border:1px solid {LINE};border-top:3px solid {MARK};border-radius:16px">
 <div class="pad" style="padding:36px 36px 34px">

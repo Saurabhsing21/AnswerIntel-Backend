@@ -190,6 +190,6 @@ def export_scan_csv(project_id: UUID, scan_id: int, current_user: User = Depends
                 mention.reason if mention else "", mention.evidence if mention else "",
                 "; ".join(picks.get(record.id, [])), " ".join(sources.get(record.id, [])),
             ])
-        filename = f"seenlens-scan-{scan.id}.csv"
+        filename = f"seenlense-scan-{scan.id}.csv"
         return Response(out.getvalue(), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{filename}"'})

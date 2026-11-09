@@ -38,7 +38,7 @@ def test_export_has_the_users_data_but_no_raw_provider_json_or_costs(client):
     headers, project_id = scanned_account(client)
     response = client.get(f"{API}/auth/me/export", headers=headers)
     assert response.status_code == 200
-    assert response.headers["content-disposition"].startswith('attachment; filename="seenlens-export-')
+    assert response.headers["content-disposition"].startswith('attachment; filename="seenlense-export-')
     data = response.json()
     assert data["account"]["email"] == me(client, headers)["email"]
     project = data["workspaces"][0]["projects"][0]

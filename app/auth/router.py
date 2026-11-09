@@ -281,7 +281,7 @@ def export_me(current_user: User = Depends(get_current_user)):
     """Everything the user owns, as a download. Raw provider responses and cost figures are not part of it."""
     with SessionLocal() as session:
         data = account.export_data(session, current_user)
-    name = f"seenlens-export-{datetime.now(timezone.utc).date().isoformat()}.json"
+    name = f"seenlense-export-{datetime.now(timezone.utc).date().isoformat()}.json"
     return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 

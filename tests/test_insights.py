@@ -48,7 +48,7 @@ def test_scan_exports_as_csv(client):
     headers, project_id, scan_id = scanned(client, "csv")
     response = client.get(f"{API}/projects/{project_id}/scans/{scan_id}/export.csv", headers=headers)
     assert response.status_code == 200 and response.headers["content-type"].startswith("text/csv")
-    assert f'seenlens-scan-{scan_id}.csv' in response.headers["content-disposition"]
+    assert f'seenlense-scan-{scan_id}.csv' in response.headers["content-disposition"]
     rows = list(csv.reader(io.StringIO(response.text)))
     answers = client.get(f"{API}/projects/{project_id}/scans/{scan_id}/responses", headers=headers).json()
     assert rows[0][:3] == ["prompt", "category", "engine"] and len(rows) == len(answers) + 1

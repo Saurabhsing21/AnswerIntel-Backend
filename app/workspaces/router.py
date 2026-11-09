@@ -35,9 +35,9 @@ def _send_invite(email: str, workspace_name: str, inviter: str, token: str | Non
         url, button = links.link("/invite", token), "Accept the invitation"
         footer = f"The invitation expires in {INVITE_DAYS} days. Sign up or log in with this email address to accept."
     else:
-        url, button, footer = f"{settings.app_base_url.rstrip('/')}/projects", "Open SeenLens", "You can leave the workspace any time from Team."
-    links.send(email, f"{inviter} invited you to {workspace_name} on SeenLens", links.render(
-        f"Join {workspace_name} on SeenLens",
+        url, button, footer = f"{settings.app_base_url.rstrip('/')}/projects", "Open SeenLense", "You can leave the workspace any time from Team."
+    links.send(email, f"{inviter} invited you to {workspace_name} on SeenLense", links.render(
+        f"Join {workspace_name} on SeenLense",
         f"{inviter} invited you to see how AI engines talk about their brand and competitors.",
         button, url, footer,
     ))

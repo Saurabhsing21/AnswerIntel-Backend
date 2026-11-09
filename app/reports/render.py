@@ -137,7 +137,7 @@ td{{padding:10px;border-bottom:1px solid #e5e5e5;vertical-align:top}} .r{{text-a
 ol>li{{margin:0 0 18px}} footer{{color:#a3a3a3;font-size:12px;border-top:1px solid #e5e5e5;margin-top:40px;padding-top:16px}}
 @media (max-width:640px){{header,.wrap{{padding-left:20px;padding-right:20px}} .tiles{{grid-template-columns:1fr 1fr}} .bar{{width:60px}}}}
 </style></head><body><main>
-<header><div class=logo><i></i>SeenLens</div><p class=kicker>AI VISIBILITY REPORT</p><h1>{escape(content['brand'])}</h1>
+<header><div class=logo><i></i>SeenLense</div><p class=kicker>AI VISIBILITY REPORT</p><h1>{escape(content['brand'])}</h1>
 <p>{escape(content['website'].split("://")[-1].rstrip("/"))} &middot; {escape(content['category'])}{f" &middot; {escape(meta['country'])}" if meta.get('country') else ''}</p></header>
 <div class=wrap><div class=tiles>{tiles}</div>
 <h3>Executive summary</h3><ul>{summary}</ul>{f"<dl>{scope}</dl>" if scope else ""}
@@ -148,5 +148,5 @@ ol>li{{margin:0 0 18px}} footer{{color:#a3a3a3;font-size:12px;border-top:1px sol
 {section(5, "What to do first", "Ranked by expected impact on how often AI recommends you.", f"<ol>{actions}</ol>" if actions else "<p class=muted>No open gaps were found in this scan.</p>")}
 {"" if (meta.get("scans_in_trend") or 0) > 1 else "<p class=muted style=\"margin-top:32px\">This is your first scan. Tracking starts with the next one, and later reports show what changed.</p>"}
 <footer>Scan {escape(str(meta.get("scan_id", "")))} &middot; generated {escape(_date(meta.get("generated_at"), True))}. AI answers vary between runs, users and over time; rates carry the margin of error shown.
-Confidential. Prepared by SeenLens for {escape(content['brand'])}.</footer>
+Confidential. Prepared by SeenLense for {escape(content['brand'])}.</footer>
 </div></main></body></html>"""

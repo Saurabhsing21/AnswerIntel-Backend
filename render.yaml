@@ -1,4 +1,4 @@
-# Render Blueprint for the SeenLens backend (API). Build is the repo's Dockerfile (Python + Node + PDF renderer).
+# Render Blueprint for the SeenLense backend (API). Build is the repo's Dockerfile (Python + Node + PDF renderer).
 # One free web service, no Redis/Celery: scans run in-process (RUN_SCANS_IN_PROCESS=true). Weekly scans and
 # cleanup are triggered by an external cron (GitHub Actions) hitting the app; the free service is kept awake by a
 # pinger. Secrets (sync: false) are set in the Render dashboard, not committed here.

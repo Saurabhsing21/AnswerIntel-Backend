@@ -56,7 +56,7 @@ def test_new_signup_gets_one_confirmation_email(client, monkeypatch):
     email = fresh_email()
     client.post(f"{API}/waitlist", json={"email": email})
     client.post(f"{API}/waitlist", json={"email": email.upper()})  # joining again sends nothing new
-    assert sent == [(email, "You're on the SeenLens waitlist")]
+    assert sent == [(email, "You're on the SeenLense waitlist")]
 
 
 def test_waitlist_only_mode_closes_everything_else(client, monkeypatch):

@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # Google Identity Services web client ID. Empty = "Continue with Google" is hidden.
     google_client_id: str = ""
     resend_api_key: str = ""
-    email_from: str = "SeenLens <saurabh@seenlense.com>"
+    email_from: str = "SeenLense <saurabh@seenlense.com>"
 
     # Billing (Stripe). Empty secret key = checkout and portal are disabled and the API says so.
     stripe_secret_key: str = ""

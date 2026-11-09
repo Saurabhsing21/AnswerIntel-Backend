@@ -1,4 +1,4 @@
-# SeenLens — Technical PRD
+# SeenLense — Technical PRD
 
 ## AI Visibility & Competitor Intelligence Platform
 
@@ -17,9 +17,9 @@
 
 # 1. Product Definition
 
-SeenLens measures how AI assistants describe and recommend businesses.
+SeenLense measures how AI assistants describe and recommend businesses.
 
-A customer gives SeenLens:
+A customer gives SeenLense:
 
 - Business
 - Website
@@ -27,7 +27,7 @@ A customer gives SeenLens:
 - Market
 - Competitors
 
-SeenLens automatically generates realistic customer prompts, sends them to supported AI/search providers, analyzes the responses, identifies competitors and citations, calculates visibility metrics, detects visibility gaps, and recommends actions.
+SeenLense automatically generates realistic customer prompts, sends them to supported AI/search providers, analyzes the responses, identifies competitors and citations, calculates visibility metrics, detects visibility gaps, and recommends actions.
 
 The core loop is:
 
@@ -65,7 +65,7 @@ Measure Change
 
 # 2. Product Boundary
 
-SeenLens is NOT initially:
+SeenLense is NOT initially:
 
 - an SEO replacement
 - a CMS
@@ -75,7 +75,7 @@ SeenLens is NOT initially:
 - a CRM
 - a content-generation platform
 
-SeenLens's initial job is:
+SeenLense's initial job is:
 
 > **Measure → Explain → Recommend → Re-measure**
 
@@ -3220,7 +3220,7 @@ Metric
 Opportunity
 ```
 
-That is the heart of SeenLens.
+That is the heart of SeenLense.
 
 (Billing was on this list; it is now built, see section 83, because scans cost real money.)
 
