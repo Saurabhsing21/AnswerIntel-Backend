@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 
 from app.auth.dependencies import require_admin
@@ -114,65 +114,4 @@ def costs(days: int = Query(30, ge=1, le=365)):
             "top_workspaces": workspaces,
             "recent_scans": scans,
             "margin_by_plan": margin,
-        }
-
-
-@router.get("/runs/{scan_id}")
-def run(scan_id: int):
-    """One run's real cost: the scan's totals, a breakdown by purpose and engine, and every billed call.
-
-    The cost is what the provider billed (ai_calls.cost_usd), never an estimate. `credits_charged` is what the
-    plan's meter deducted, so `cost_per_credit` shows whether the pricing is holding against real spend."""
-    with SessionLocal() as session:
-        row = session.execute(
-            select(Scan, Project.brand_name, Project.workspace_id)
-            .join(Project, Project.id == Scan.project_id)
-            .where(Scan.id == scan_id)
-        ).first()
-        if row is None:
-            raise HTTPException(status_code=404, detail="No such scan")
-        scan, brand, workspace_id = row
-
-        breakdown = [
-            {"purpose": purpose, "engine": engine, "calls": calls, "failed": failed,
-             "cost": _money(cost), "input_tokens": int(in_tok), "output_tokens": int(out_tok), "web_searches": int(web)}
-            for purpose, engine, calls, failed, cost, in_tok, out_tok, web in session.execute(
-                select(
-                    AICall.purpose, AICall.engine, func.count(AICall.id),
-                    func.count(AICall.id).filter(AICall.status == "failed"),
-                    func.coalesce(func.sum(AICall.cost_usd), 0),
-                    func.coalesce(func.sum(AICall.input_tokens), 0),
-                    func.coalesce(func.sum(AICall.output_tokens), 0),
-                    func.coalesce(func.sum(AICall.web_searches), 0),
-                )
-                .where(AICall.scan_id == scan_id)
-                .group_by(AICall.purpose, AICall.engine)
-                .order_by(func.sum(AICall.cost_usd).desc())
-            )
-        ]
-        calls = [
-            {"id": c.id, "created_at": c.created_at.isoformat(), "purpose": c.purpose, "engine": c.engine,
-             "model": c.model, "cost": _money(c.cost_usd), "input_tokens": c.input_tokens, "output_tokens": c.output_tokens,
-             "reasoning_tokens": c.reasoning_tokens, "web_searches": c.web_searches, "latency_ms": c.latency_ms, "status": c.status}
-            for c in session.scalars(
-                select(AICall).where(AICall.scan_id == scan_id).order_by(AICall.cost_usd.desc(), AICall.id).limit(500)
-            )
-        ]
-        cost = _money(scan.cost_usd)
-        credits = float(scan.credits or 0)
-        duration = int((scan.completed_at - scan.started_at).total_seconds() * 1000) if scan.started_at and scan.completed_at else None
-        return {
-            "scan": {
-                "id": scan.id, "brand": brand, "workspace_id": str(workspace_id), "kind": scan.kind, "status": scan.status,
-                "created_at": scan.created_at.isoformat(),
-                "started_at": scan.started_at.isoformat() if scan.started_at else None,
-                "completed_at": scan.completed_at.isoformat() if scan.completed_at else None,
-                "duration_ms": duration,
-                "total_runs": scan.total_runs, "completed_runs": scan.completed_runs, "failed_runs": scan.failed_runs,
-                "ai_calls": scan.ai_calls, "web_searches": scan.web_searches,
-                "cost": cost, "credits_charged": credits,
-                "cost_per_credit": round(cost / credits, 5) if credits else None,
-            },
-            "breakdown": breakdown,
-            "calls": calls,
         }
