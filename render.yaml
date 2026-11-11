@@ -57,3 +57,5 @@ services:
         sync: false
       - key: PADDLE_WEBHOOK_SECRET   # from the live notification destination
         sync: false
+      - key: FORWARDED_ALLOW_IPS     # Render's proxy, so uvicorn sees Paddle's real address for the webhook IP check
+        sync: false

@@ -58,6 +58,8 @@ def get_billing(workspace_id: UUID, current_user: User = Depends(get_current_use
             "can_manage": member.role == "owner",
             "billing_enabled": settings.billing_enabled,
             "has_billing_account": bool(sub and sub.paddle_customer_id),
+            # Paddle's customer id (never ours, never the email), for Paddle Retain in the browser.
+            "paddle_customer_id": sub.paddle_customer_id if sub else None,
             "trial_ends_at": sub.trial_ends_at if sub else None,
             "current_period_end": sub.current_period_end if sub else None,
             "cancel_at_period_end": bool(sub and sub.cancel_at_period_end),

@@ -6,6 +6,7 @@ customer portal, changes plans and cancels on account deletion.
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import time
@@ -21,6 +22,9 @@ log = logging.getLogger(__name__)
 SIGNATURE_TOLERANCE_SECONDS = 300
 
 _price_ids: dict[tuple[str, str], str] = {}
+# Paddle's webhook source addresses, from its /ips endpoint (the source of truth; it can change), refreshed hourly.
+IPS_TTL_SECONDS = 3600
+_ips: tuple[float, list] = (0.0, [])
 
 
 def _base() -> str:
@@ -71,6 +75,34 @@ def portal_url(customer_id: str, subscription_ids: list[str]) -> str:
     """A short-lived link that signs the customer in to Paddle's portal: invoices, payment method, cancel."""
     session = _request("POST", f"/customers/{customer_id}/portal-sessions", {"subscription_ids": subscription_ids})
     return session["urls"]["general"]["overview"]
+
+
+def webhook_networks(now: float | None = None) -> list:
+    """The networks Paddle sends webhooks from, for this environment. Falls back to the last good list if the
+    endpoint is unreachable; with no list at all it raises, so the delivery is refused and Paddle retries later."""
+    global _ips
+    now = now or time.time()
+    fetched_at, networks = _ips
+    if networks and now - fetched_at < IPS_TTL_SECONDS:
+        return networks
+    try:
+        response = httpx.get(_base() + "/ips", timeout=10)
+        response.raise_for_status()
+        networks = [ipaddress.ip_network(cidr) for cidr in response.json()["data"]["ipv4_cidrs"]]
+        _ips = (now, networks)
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
+        if not _ips[1]:
+            raise AppError(503, "BILLING_PROVIDER_ERROR", "Could not load Paddle's webhook addresses.") from exc
+        log.warning("Could not refresh Paddle's webhook addresses; using the last list", exc_info=True)
+    return _ips[1]
+
+
+def is_paddle_ip(ip: str | None) -> bool:
+    try:
+        address = ipaddress.ip_address(ip or "")
+    except ValueError:
+        return False
+    return any(address in network for network in webhook_networks())
 
 
 def verify_event(payload: bytes, header: str | None, now: float | None = None) -> dict:

@@ -15,6 +15,7 @@ from app.billing import paddle_client
 from app.billing.emails import send_payment_failed
 from app.billing.models import BillingEvent
 from app.billing.service import apply_paddle_customer, apply_paddle_subscription, cancel_replaced, find_subscription
+from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
 
@@ -66,6 +67,12 @@ def handle_event(event: dict) -> str:
 
 @router.post("/webhook", include_in_schema=False)
 async def paddle_webhook(request: Request):
+    if not settings.billing_enabled:
+        raise AppError(503, "BILLING_NOT_CONFIGURED", "Billing is not configured on this server.")
+    caller = request.client.host if request.client else None
+    if settings.paddle_webhook_ip_check and not await run_in_threadpool(paddle_client.is_paddle_ip, caller):
+        log.warning("Refused a webhook from %s: not one of Paddle's addresses", caller)
+        raise AppError(403, "FORBIDDEN", "Webhooks are accepted only from Paddle.")
     payload = await request.body()  # raw bytes: the signature covers the body exactly as sent
     try:
         event = paddle_client.verify_event(payload, request.headers.get("paddle-signature"))

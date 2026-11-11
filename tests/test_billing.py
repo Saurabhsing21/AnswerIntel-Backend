@@ -29,6 +29,7 @@ from app.workspaces.models import Workspace
 from tests.conftest import API, make_project, signup
 
 SECRET = "pdl_ntfset_test_secret"
+IS_PADDLE_IP = paddle_client.is_paddle_ip  # the real check, before fake_paddle swaps it out
 PROJECT = {"brand_name": "Halden", "website": "https://halden.co", "description": "CRM", "category": "CRM software", "country": "US"}
 
 
@@ -72,6 +73,7 @@ def fake_paddle(monkeypatch):
     monkeypatch.setattr(settings, "paddle_webhook_secret", SECRET)
     for name in ("price_id_for", "change_price", "cancel_subscription", "portal_url"):
         monkeypatch.setattr(paddle_client, name, getattr(fake, name))
+    monkeypatch.setattr(paddle_client, "is_paddle_ip", lambda ip: True)  # the test client is not on Paddle's network
     return fake
 
 
@@ -259,6 +261,19 @@ def test_bad_stale_or_missing_signature_is_rejected(client, fake_paddle):
     payload = json.dumps({"event_id": "evt_1", "event_type": "customer.created", "data": {"id": "ctm_1", "email": "a@b.c"}})
     tampered = client.post("/api/v1/billing/webhook", content=payload.replace(", ", ","), headers={"paddle-signature": sign(payload)})
     assert tampered.status_code == 400
+
+
+def test_webhooks_only_from_paddles_published_addresses(client, fake_paddle, monkeypatch):
+    import ipaddress
+
+    monkeypatch.setattr(paddle_client, "is_paddle_ip", IS_PADDLE_IP)
+    monkeypatch.setattr(paddle_client, "_ips", (time.time(), [ipaddress.ip_network("34.237.3.244/32")]))
+    assert paddle_client.is_paddle_ip("34.237.3.244") and not paddle_client.is_paddle_ip("1.2.3.4")
+    assert not paddle_client.is_paddle_ip("testclient")
+    refused = post_event(client, "customer.created", {"id": "ctm_ip", "email": "a@b.c"})  # the test client's address
+    assert refused.status_code == 403
+    monkeypatch.setattr(settings, "paddle_webhook_ip_check", False)
+    assert post_event(client, "customer.created", {"id": "ctm_ip", "email": "a@b.c"}).status_code == 200
 
 
 def test_unrelated_event_is_recorded_and_ignored(client, fake_paddle):

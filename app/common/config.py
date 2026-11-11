@@ -96,6 +96,9 @@ class Settings(BaseSettings):
     paddle_env: str = ""  # sandbox | production; required once a Paddle key or secret is set, never guessed
     paddle_api_key: str = ""
     paddle_webhook_secret: str = ""
+    # Accept webhooks only from Paddle's published addresses (on top of the signature). The caller's address is what
+    # uvicorn resolves from X-Forwarded-For (--proxy-headers), so FORWARDED_ALLOW_IPS must cover the host's proxy.
+    paddle_webhook_ip_check: bool = True
     # File storage (Cloudflare R2). Any value missing = report PDFs stay in the database.
     r2_account_id: str = ""
     r2_bucket: str = ""
