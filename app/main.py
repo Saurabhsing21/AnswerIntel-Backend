@@ -63,7 +63,7 @@ app.add_middleware(
 register_error_handlers(app)
 observability.install(app)
 app.include_router(api_router)
-app.include_router(billing_webhook_router)  # no user and no per-IP limit: Stripe signs every call
+app.include_router(billing_webhook_router)  # no user and no per-IP limit: Cashfree signs every call
 
 
 @app.get("/health")

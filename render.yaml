@@ -42,7 +42,7 @@ services:
         sync: false
       - key: CORS_ORIGINS            # your Vercel frontend URL, e.g. https://seenlense.com
         sync: false
-      - key: APP_BASE_URL            # same Vercel URL (Stripe return + email links)
+      - key: APP_BASE_URL            # same Vercel URL (Cashfree return + email links)
         sync: false
       # --- optional: leave unset to disable the feature ---
       - key: RESEND_AUDIENCE_ID      # waitlist
@@ -51,19 +51,9 @@ services:
         sync: false
       - key: SENTRY_DSN              # error monitoring
         sync: false
-      - key: STRIPE_SECRET_KEY       # billing (all 8 Stripe vars optional until you sell plans)
+      - key: CASHFREE_CLIENT_ID      # billing (optional until you sell plans)
         sync: false
-      - key: STRIPE_WEBHOOK_SECRET
+      - key: CASHFREE_CLIENT_SECRET
         sync: false
-      - key: STRIPE_PRICE_STARTER_MONTHLY
-        sync: false
-      - key: STRIPE_PRICE_STARTER_YEARLY
-        sync: false
-      - key: STRIPE_PRICE_GROWTH_MONTHLY
-        sync: false
-      - key: STRIPE_PRICE_GROWTH_YEARLY
-        sync: false
-      - key: STRIPE_PRICE_PRO_MONTHLY
-        sync: false
-      - key: STRIPE_PRICE_PRO_YEARLY
-        sync: false
+      - key: CASHFREE_ENV            # production with live keys
+        value: production

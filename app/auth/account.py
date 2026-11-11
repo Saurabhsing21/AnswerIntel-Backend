@@ -4,7 +4,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.analysis.models import Citation, CompetitorObservation, Mention
-from app.billing import stripe_client
+from app.billing import cashfree_client
 from app.billing.models import Subscription
 from app.common import storage
 from app.common.errors import AppError
@@ -90,7 +90,7 @@ def delete_account(session: Session, user: User) -> list[str]:
     """Removes the user and every workspace they alone own. Returns the R2 keys to delete once the commit succeeds.
 
     Nothing is transferred silently: a workspace with other people in it must be handed over or emptied first (409).
-    Raises before touching anything if Stripe can't cancel a subscription."""
+    Raises before touching anything if Cashfree can't cancel a subscription."""
     memberships = session.scalars(select(WorkspaceMember).where(WorkspaceMember.user_id == user.id)).all()
     doomed, kept = [], []
     for m in memberships:
@@ -110,9 +110,9 @@ def delete_account(session: Session, user: User) -> list[str]:
                        f"You are the only owner of {', '.join(blocked)}, which has other members. Make someone else an owner or remove the members first.")
 
     subscriptions = session.scalars(select(Subscription).where(
-        Subscription.workspace_id.in_(doomed), Subscription.stripe_subscription_id.is_not(None), Subscription.status != "canceled")).all()
+        Subscription.workspace_id.in_(doomed), Subscription.cashfree_subscription_id.is_not(None), Subscription.status != "canceled")).all()
     for sub in subscriptions:
-        stripe_client.cancel_subscription(sub.stripe_subscription_id)
+        cashfree_client.cancel_subscription(sub.cashfree_subscription_id)
 
     keys = session.scalars(
         select(ReportPdf.storage_key).join(Report, Report.id == ReportPdf.report_id).join(Project, Project.id == Report.project_id)

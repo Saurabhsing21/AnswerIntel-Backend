@@ -1,7 +1,7 @@
 """Plans and what each one allows. The single source for every per-workspace limit.
 
 A new account's own workspace starts on the free trial: one project and one scan, no card. Any other workspace
-has no plan until it pays. "trial" rows exist only for workspaces that predate billing and run out on their own. Stripe holds the prices; this file holds the limits. The frontend copy for the pricing section is
+has no plan until it pays. "trial" rows exist only for workspaces that predate billing and run out on their own. This file holds the prices (Cashfree plans are created from them) and the limits. The frontend copy for the pricing section is
 frontend/lib/billing/plans.ts; keep the two in step when a number changes. The global settings
 (max_active_prompts, max_competitors, max_scans_per_day, raw_response_retention_days) stay as hard
 ceilings: a plan can only lower them.
@@ -37,7 +37,7 @@ class Plan:
     retention_days: int
     schedules: bool
     experiments: bool
-    price_monthly: int = 0  # USD, display only; Stripe charges the price ids in settings
+    price_monthly: int = 0  # in settings.cashfree_currency; Cashfree plans are made from these
     price_yearly: int = 0
     scans_total: int | None = None  # scans ever, per workspace; only the free trial has one
     pro: bool = True  # drafts, re-tests, reports, exports, invites, alerts, more prompts: everything past the free trial
@@ -50,11 +50,11 @@ PRO_ENGINES = GROWTH_ENGINES + ("gemini", "deepseek", "llama", "mistral")
 
 # Plans are priced in credits: 1 credit = 1 ChatGPT Search answer, and every answer (prompt x engine) a scan asks for
 # costs its engine's weight below, counted over any 30 days. Credits enforce the cost rule: what a paying user can cost
-# us (AI + Stripe fee) is at most 50% of a monthly price and 60% of a yearly one (20% off), for any engine mix.
+# us (AI + payment fee) is at most 50% of a monthly price and 60% of a yearly one (20% off), for any engine mix.
 # The weights follow what one answer costs us, analysis included: ChatGPT Search ~$0.0135, Gemini ~$0.0161,
 # Perplexity ~$0.0069, Claude ~$0.0047, DeepSeek/Llama/Mistral ~$0.001-0.002. Each weight is that cost over
 # ChatGPT Search's, rounded so that one credit never costs more than ~$0.0138 whatever the engine. So the worst case is
-# credits_per_month x $0.0138 (Pro: 3300 x $0.0138 = $45.5, plus a $3.20 Stripe fee, under $50 of $100).
+# credits_per_month x $0.0138 (Pro: 3300 x $0.0138 = $45.5, plus a ~$4 card fee, under $50 of $100).
 # An engine missing here costs a full credit. Engines widen with the plan: ChatGPT Search on the free trial,
 # + Perplexity on Starter, + Claude on Growth, + Gemini, DeepSeek, Llama and Mistral on Pro.
 ENGINE_CREDITS = {
@@ -136,7 +136,9 @@ def state_of(sub: Subscription | None, now: datetime) -> str:
         return "active"
     if sub.status == "past_due" and (sub.grace_ends_at is None or sub.grace_ends_at > now):
         return "past_due"
-    return "lapsed"  # canceled, unpaid, incomplete_expired, or past_due beyond the grace period
+    if sub.status == "canceled" and sub.current_period_end and sub.current_period_end > now:
+        return "active"  # canceled, but the period already paid for has not ended
+    return "lapsed"  # canceled, paused, incomplete_expired, or past_due beyond the grace period
 
 
 def entitlements_for(sub: Subscription | None, now: datetime | None = None) -> Entitlements:

@@ -6,7 +6,7 @@ import uuid
 from sqlalchemy import select
 
 from app.auth import google
-from app.billing import stripe_client
+from app.billing import cashfree_client
 from app.billing.models import Subscription
 from app.common import storage
 from app.common.database import SessionLocal
@@ -89,16 +89,16 @@ def test_delete_needs_the_right_password_and_removes_everything(client, monkeypa
     assert client.post(f"{API}/auth/login", json={"email": email, "password": "password123"}).status_code == 401
 
 
-def test_delete_cancels_stripe_and_removes_r2_files(client, monkeypatch):
+def test_delete_cancels_cashfree_and_removes_r2_files(client, monkeypatch):
     headers, project_id = scanned_account(client, "delr2")
     user_id = me(client, headers)["id"]
     canceled, removed = [], []
     sub_id = f"sub_{uuid.uuid4().hex[:10]}"
-    monkeypatch.setattr(stripe_client, "cancel_subscription", canceled.append)
+    monkeypatch.setattr(cashfree_client, "cancel_subscription", canceled.append)
     monkeypatch.setattr(storage, "delete", removed.append)
     with SessionLocal() as session:
         workspace_id = session.scalar(select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user_id))
-        session.scalar(select(Subscription).where(Subscription.workspace_id == workspace_id)).stripe_subscription_id = sub_id
+        session.scalar(select(Subscription).where(Subscription.workspace_id == workspace_id)).cashfree_subscription_id = sub_id
         report_id = session.scalar(select(ReportPdf.report_id).join(Report, Report.id == ReportPdf.report_id).where(Report.project_id == project_id))
         session.get(ReportPdf, report_id).storage_key = f"reports/{project_id}/{report_id}.pdf"
         session.commit()
@@ -106,7 +106,7 @@ def test_delete_cancels_stripe_and_removes_r2_files(client, monkeypatch):
     assert canceled == [sub_id] and removed == [f"reports/{project_id}/{report_id}.pdf"]
 
 
-def test_stripe_failure_leaves_the_account_untouched(client, monkeypatch):
+def test_cashfree_failure_leaves_the_account_untouched(client, monkeypatch):
     headers, _ = scanned_account(client, "delfail")
     user_id = me(client, headers)["id"]
     from app.common.errors import AppError
@@ -114,11 +114,11 @@ def test_stripe_failure_leaves_the_account_untouched(client, monkeypatch):
     def boom(_):
         raise AppError(502, "BILLING_PROVIDER_ERROR", "down")
 
-    monkeypatch.setattr(stripe_client, "cancel_subscription", boom)
+    monkeypatch.setattr(cashfree_client, "cancel_subscription", boom)
     sub_id = f"sub_{uuid.uuid4().hex[:10]}"
     with SessionLocal() as session:
         wid = session.scalar(select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user_id))
-        session.scalar(select(Subscription).where(Subscription.workspace_id == wid)).stripe_subscription_id = sub_id
+        session.scalar(select(Subscription).where(Subscription.workspace_id == wid)).cashfree_subscription_id = sub_id
         session.commit()
     assert delete(client, headers, password="password123").status_code == 502
     with SessionLocal() as session:

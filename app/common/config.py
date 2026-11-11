@@ -91,21 +91,18 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from: str = "SeenLense <saurabh@seenlense.com>"
 
-    # Billing (Stripe). Empty secret key = checkout and portal are disabled and the API says so.
-    stripe_secret_key: str = ""
-    stripe_webhook_secret: str = ""
-    stripe_price_starter_monthly: str = ""
-    stripe_price_starter_yearly: str = ""
-    stripe_price_growth_monthly: str = ""
-    stripe_price_growth_yearly: str = ""
-    stripe_price_pro_monthly: str = ""
-    stripe_price_pro_yearly: str = ""
+    # Billing (Cashfree Subscriptions). Empty keys = checkout is disabled and the API says so. The client secret
+    # also signs webhooks. Plans are created in Cashfree on first use from app/billing/plans.py prices.
+    cashfree_client_id: str = ""
+    cashfree_client_secret: str = ""
+    cashfree_env: str = "sandbox"  # sandbox | production
+    cashfree_currency: str = "USD"
     # File storage (Cloudflare R2). Any value missing = report PDFs stay in the database.
     r2_account_id: str = ""
     r2_bucket: str = ""
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
-    app_base_url: str = "http://localhost:3000"  # where Stripe sends people back after Checkout and the Portal
+    app_base_url: str = "http://localhost:3000"  # where Cashfree sends people back after checkout
 
     model_config = {
         "env_file": (".env", "../.env.local"),  # later files win: Neon's .env.local overrides backend/.env
@@ -122,9 +119,9 @@ class Settings(BaseSettings):
         # A guessable signing secret lets anyone mint valid tokens, so production refuses to boot with one.
         if self.app_env == "production" and (len(self.jwt_secret_key) < 32 or "change-this" in self.jwt_secret_key.lower()):
             raise ValueError("JWT_SECRET_KEY must be a random value of at least 32 characters when APP_ENV=production.")
-        # Billing on without a webhook secret would take payments that never reach the workspace's plan.
-        if self.app_env == "production" and self.stripe_secret_key and not self.stripe_webhook_secret:
-            raise ValueError("STRIPE_WEBHOOK_SECRET is required when STRIPE_SECRET_KEY is set and APP_ENV=production.")
+        # Sandbox keys in production would show a test checkout that never takes real money.
+        if self.app_env == "production" and self.billing_enabled and self.cashfree_env != "production":
+            raise ValueError("CASHFREE_ENV must be production when Cashfree keys are set and APP_ENV=production.")
         # Without a key no scan or AI feature can run: never acceptable for paying users.
         # The waitlist-only launch site has no scans, so it may run without one.
         if self.app_env == "production" and not self.waitlist_only and not self.openrouter_api_key.strip():
@@ -149,7 +146,7 @@ class Settings(BaseSettings):
 
     @property
     def billing_enabled(self) -> bool:
-        return bool(self.stripe_secret_key.strip())
+        return bool(self.cashfree_client_id.strip() and self.cashfree_client_secret.strip())
 
     @property
     def r2_enabled(self) -> bool:

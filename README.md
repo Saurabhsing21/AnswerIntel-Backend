@@ -64,7 +64,7 @@ app refuses to start with a weak `JWT_SECRET_KEY`.
 
 ## The product loop
 
-register (from a pricing plan) -> Stripe Checkout -> workspace subscribed -> project -> competitors (plan limit) -> `POST /prompts/generate` ->
+register (from a pricing plan) -> Cashfree checkout -> workspace subscribed -> project -> competitors (plan limit) -> `POST /prompts/generate` ->
 review prompts -> `POST /scans` (queued; poll `GET /scans/{id}`) -> `GET /dashboard`, `/scans/{id}/results`,
 `/citations`, `/competitors/analysis`, `/opportunities` -> `POST /experiments` (baseline) -> change the site ->
 re-scan -> `POST /experiments/{id}/complete` -> `POST /reports` (share, export HTML/PDF, email).
@@ -88,32 +88,35 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 | `experiments` | Baseline and follow-up snapshots with before/after comparison |
 | `reports` | Weekly/monthly/manual reports, share links, HTML/PDF export, Resend email |
 | `waitlist` | Public landing-page signups (idempotent, rate limited) |
-| `billing` | Plans and entitlements (every limit), Stripe Checkout/Portal, webhook, billing emails |
+| `billing` | Plans and entitlements (every limit), Cashfree checkout, plan change and cancel, webhook, billing emails |
 | `common` | Config, database, errors, rate limiting, safe HTTP fetcher, observability |
 
-## Billing (Stripe)
+## Billing (Cashfree)
 
-There is no free plan (only the one-off free check on the website). A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Stripe Checkout
-(the website's pricing buttons go to `/register?plan=...`, which continues straight to Checkout; an unpaid account
+There is no free plan (only the one-off free check on the website). A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Cashfree Subscriptions
+(the website's pricing buttons go to `/register?plan=...`, which continues straight to checkout; an unpaid account
 sees a "Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
 runs out on its own. Each plan has a prompt pool shared by its projects and a monthly AI-answer allowance (prompt × engine) that
-every scan draws from; that allowance is what bounds model cost. Limits live in `app/billing/plans.py`. Without `STRIPE_SECRET_KEY` checkout says billing is off.
+every scan draws from; that allowance is what bounds model cost. Limits and prices live in `app/billing/plans.py`. Without `CASHFREE_CLIENT_ID`/`CASHFREE_CLIENT_SECRET` checkout says billing is off.
 
-Setup in Stripe test mode:
+How it works: checkout creates a Cashfree subscription on a periodic plan (`seenlense_<plan>_<interval>_usd<price>`,
+created in Cashfree on first use, so a price change makes a new plan and never edits a live one) and the browser opens
+Cashfree's hosted checkout. The authorisation charges the first period in full; Cashfree charges every renewal itself.
+Cashfree requires a phone number, asked once at the first checkout. There is no customer portal: the owner changes
+plan (`/billing/change`, Cashfree `CHANGE_PLAN`, new limits now and new price from the next renewal) or cancels
+(`/billing/cancel`, everything keeps working until the paid period ends) in the app.
 
-1. In the Stripe dashboard (test mode) create three products, Starter, Growth and Pro, each with a monthly and a
-   yearly recurring USD price ($20/$192, $50/$480, $100/$960). Put the six price ids in
-   `STRIPE_PRICE_{STARTER,GROWTH,PRO}_{MONTHLY,YEARLY}` and the secret key (`sk_test_...`) in `STRIPE_SECRET_KEY`.
-2. Turn on the Customer Portal (Settings -> Billing -> Customer portal): allow updating payment methods,
-   viewing invoices, cancelling, and switching between the six prices.
-3. Forward webhooks locally: `stripe listen --forward-to localhost:8000/api/v1/billing/webhook` and put the
-   printed `whsec_...` in `STRIPE_WEBHOOK_SECRET`. In production add an endpoint for the same path with the
-   events `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
-   `customer.subscription.deleted`, `invoice.paid` and `invoice.payment_failed`. Stripe calls the API
-   directly, not through the Next.js proxy.
-4. Set `APP_BASE_URL` to the dashboard URL (Checkout and the Portal return there).
-5. Try it: Checkout with `4242 4242 4242 4242` (plan flips to the paid tier), then `4000 0000 0000 0341`
-   (payment fails: past due with a 7-day grace, then read-only). Cancel in the Portal (the workspace goes read-only when the period ends).
+Setup:
+
+1. Put the test keys in `CASHFREE_CLIENT_ID`/`CASHFREE_CLIENT_SECRET` with `CASHFREE_ENV=sandbox`. Charging in USD needs
+   International Payments enabled on the account (sandbox allows it).
+2. Webhooks: in the Cashfree dashboard (Developers -> Webhooks, Subscriptions) add `<API URL>/api/v1/billing/webhook`
+   (Cashfree calls the API directly, not through the Next.js proxy). Locally, expose port 8000 with
+   `ngrok http 8000` and use the ngrok URL. Events used: `SUBSCRIPTION_STATUS_CHANGED`, `SUBSCRIPTION_AUTH_STATUS`,
+   `SUBSCRIPTION_PAYMENT_SUCCESS`, `SUBSCRIPTION_PAYMENT_FAILED`.
+3. Set `APP_BASE_URL` to the dashboard URL (checkout returns there).
+4. Try it: subscribe and approve the sandbox payment (plan flips to the paid tier), change plan, cancel (stays active
+   until the period ends). A failed renewal makes it past due with a 7-day grace, then read-only.
 
 A failed payment emails the owners from the webhook. Celery beat also sends "trial ends in 3 days" and "trial
 ended" emails daily (`billing.trial_notices`), only for the legacy trials. Both use Resend and are skipped when it is not configured.
@@ -134,4 +137,4 @@ ended" emails daily (`billing.trial_notices`), only for the legacy trials. Both 
 - Workspace invitations by email work (14-day link; the invitee must register or log in with the invited address). Adding an existing account skips the link.
 - Scan and report IDs are integers (the PRD sketches UUIDs); routes are nested under `/projects/{id}/...`.
 - The "ask my AI visibility" chat is intentionally not built (PRD section 99).
-- Billing has no tax/GST invoicing yet (Stripe Tax can be added later).
+- Billing has no tax/GST invoicing yet.

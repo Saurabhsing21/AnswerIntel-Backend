@@ -1,5 +1,8 @@
-"""Billing: card-free trial, Stripe Checkout and webhooks, and per-plan limits that follow the subscription."""
+"""Billing: card-free trial, Cashfree checkout and webhooks, and per-plan limits that follow the subscription."""
 
+import base64
+import hashlib
+import hmac
 import importlib.util
 import json
 import uuid
@@ -8,12 +11,11 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-import stripe
 from sqlalchemy import select, text, update
 
-from app.billing import stripe_client
+from app.billing import cashfree_client
 from app.billing.emails import send_trial_notices
-from app.billing.models import StripeEvent, Subscription
+from app.billing.models import BillingEvent, Subscription
 from app.billing.plans import PLANS, credits_for
 from app.common.config import settings
 from app.common.database import SessionLocal
@@ -26,51 +28,51 @@ from app.scans.retention import purge_expired
 from app.workspaces.models import Workspace
 from tests.conftest import API, make_project, signup
 
-SECRET = "whsec_test_secret"
-PRICES = {
-    "stripe_price_starter_monthly": "price_starter_m",
-    "stripe_price_starter_yearly": "price_starter_y",
-    "stripe_price_growth_monthly": "price_growth_m",
-    "stripe_price_growth_yearly": "price_growth_y",
-    "stripe_price_pro_monthly": "price_pro_m",
-    "stripe_price_pro_yearly": "price_pro_y",
-}
+SECRET = "cfsk_test_secret"
+PHONE = "+14155550123"
 PROJECT = {"brand_name": "Halden", "website": "https://halden.co", "description": "CRM", "category": "CRM software", "country": "US"}
 
 
-class FakeStripe:
-    """Stands in for app.billing.stripe_client's network calls; signature checks stay real."""
+class FakeCashfree:
+    """Stands in for app.billing.cashfree_client's network calls; signature checks and plan ids stay real."""
 
     def __init__(self):
         self.subscriptions: dict[str, dict] = {}
         self.retrieved: list[str] = []
         self.checkouts: list[dict] = []
+        self.managed: list[tuple] = []
 
-    def create_customer(self, email, workspace_id):
-        return f"cus_{uuid.uuid4().hex[:12]}"
+    def ensure_plan(self, plan, interval, name, amount):
+        return cashfree_client.plan_id(plan, interval, amount)
 
-    def create_checkout_session(self, customer_id, price_id, workspace_id, success_url, cancel_url):
-        self.checkouts.append({"customer": customer_id, "price": price_id, "workspace_id": workspace_id,
-                               "success_url": success_url, "cancel_url": cancel_url})
-        return "https://checkout.stripe.test/session"
-
-    def create_portal_session(self, customer_id, return_url):
-        return f"https://billing.stripe.test/{customer_id}"
+    def create_subscription(self, subscription_id, plan_id, amount, interval, email, phone, workspace_id, return_url):
+        self.checkouts.append({"id": subscription_id, "plan_id": plan_id, "amount": amount, "email": email, "phone": phone,
+                               "workspace_id": workspace_id, "return_url": return_url})
+        return f"sub_session_{subscription_id}"
 
     def retrieve_subscription(self, subscription_id):
         self.retrieved.append(subscription_id)
         return json.loads(json.dumps(self.subscriptions[subscription_id]))
 
+    def manage_subscription(self, subscription_id, action, plan_id=None):
+        self.managed.append((subscription_id, action, plan_id))
+        sub = self.subscriptions[subscription_id]
+        if action == "CHANGE_PLAN":
+            sub["plan_details"]["plan_id"] = plan_id
+        elif action == "CANCEL":
+            sub["subscription_status"], sub["next_schedule_date"] = "CANCELLED", None
+
+    def cancel_subscription(self, subscription_id):
+        self.manage_subscription(subscription_id, "CANCEL")
+
 
 @pytest.fixture
-def fake_stripe(monkeypatch):
-    fake = FakeStripe()
-    monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_x")
-    monkeypatch.setattr(settings, "stripe_webhook_secret", SECRET)
-    for key, value in PRICES.items():
-        monkeypatch.setattr(settings, key, value)
-    for name in ("create_customer", "create_checkout_session", "create_portal_session", "retrieve_subscription"):
-        monkeypatch.setattr(stripe_client, name, getattr(fake, name))
+def fake_cashfree(monkeypatch):
+    fake = FakeCashfree()
+    monkeypatch.setattr(settings, "cashfree_client_id", "TEST_x")
+    monkeypatch.setattr(settings, "cashfree_client_secret", SECRET)
+    for name in ("ensure_plan", "create_subscription", "retrieve_subscription", "manage_subscription", "cancel_subscription"):
+        monkeypatch.setattr(cashfree_client, name, getattr(fake, name))
     return fake
 
 
@@ -89,30 +91,35 @@ def billing(client, headers, workspace_id):
     return client.get(f"{API}/workspaces/{workspace_id}/billing", headers=headers)
 
 
-def stripe_subscription(workspace_id, status="active", price="price_starter_m", metadata=True) -> dict:
+def cashfree_subscription(workspace_id, status="ACTIVE", plan="starter", interval="month") -> dict:
+    amount = PLANS[plan].price_yearly if interval == "year" else PLANS[plan].price_monthly
     return {
-        "id": f"sub_{uuid.uuid4().hex[:12]}",
-        "object": "subscription",
-        "customer": f"cus_{uuid.uuid4().hex[:12]}",
-        "status": status,
-        "cancel_at_period_end": False,
-        "metadata": {"workspace_id": workspace_id} if metadata else {},
-        "items": {"data": [{"price": {"id": price}, "current_period_end": int(datetime.now(timezone.utc).timestamp()) + 30 * 86400}]},
+        "subscription_id": f"ws_{uuid.uuid4().hex[:20]}",
+        "cf_subscription_id": str(uuid.uuid4().int)[:16],
+        "subscription_status": status,
+        "plan_details": {"plan_id": cashfree_client.plan_id(plan, interval, amount)},
+        "next_schedule_date": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+        "subscription_tags": {"workspace_id": workspace_id},
     }
 
 
-def post_event(client, event_type, obj, event_id=None, secret=SECRET):
-    payload = json.dumps({"id": event_id or f"evt_{uuid.uuid4().hex}", "type": event_type, "data": {"object": obj}})
-    header = stripe.WebhookSignature.generate_signature_header(payload, secret)
-    return client.post("/api/v1/billing/webhook", content=payload, headers={"stripe-signature": header, "content-type": "application/json"})
+def post_event(client, event_type, data, secret=SECRET, timestamp="1762850000000"):
+    payload = json.dumps({"data": data, "event_time": datetime.now(timezone.utc).isoformat(), "type": event_type,
+                          "nonce": uuid.uuid4().hex})
+    signature = base64.b64encode(hmac.new(secret.encode(), (timestamp + payload).encode(), hashlib.sha256).digest()).decode()
+    return client.post("/api/v1/billing/webhook", content=payload, headers={
+        "x-webhook-signature": signature, "x-webhook-timestamp": timestamp, "content-type": "application/json"})
 
 
-def subscribe(client, fake, workspace_id, plan_price="price_starter_m", status="active") -> dict:
-    """Simulate a completed Checkout: Stripe sends checkout.session.completed for a new subscription."""
-    sub = stripe_subscription(workspace_id, status=status, price=plan_price, metadata=False)
-    fake.subscriptions[sub["id"]] = sub
-    event = {"object": "checkout.session", "client_reference_id": workspace_id, "customer": sub["customer"], "subscription": sub["id"]}
-    response = post_event(client, "checkout.session.completed", event)
+def payment(sub, payment_type="CHARGE", status="SUCCESS") -> dict:
+    return {"subscription_id": sub["subscription_id"], "payment_type": payment_type, "payment_status": status}
+
+
+def subscribe(client, fake, workspace_id, plan="starter", interval="month", status="ACTIVE") -> dict:
+    """Simulate a completed checkout: Cashfree sends SUBSCRIPTION_AUTH_STATUS once the mandate is authorised."""
+    sub = cashfree_subscription(workspace_id, status=status, plan=plan, interval=interval)
+    fake.subscriptions[sub["subscription_id"]] = sub
+    response = post_event(client, "SUBSCRIPTION_AUTH_STATUS", payment(sub, payment_type="AUTH"))
     assert response.status_code == 200 and response.json()["result"] == "applied"
     return sub
 
@@ -129,7 +136,7 @@ def add_member(client, owner, workspace_id):
     return client.post(f"{API}/workspaces/{workspace_id}/members", json={"email": email}, headers=owner)
 
 
-def test_signup_has_no_plan_until_checkout_is_paid(client, unpaid_signups, fake_stripe):
+def test_signup_has_no_plan_until_checkout_is_paid(client, unpaid_signups, fake_cashfree):
     headers = signup(client, "noplan")
     workspace_id = workspace_of(client, headers)
     body = billing(client, headers, workspace_id).json()
@@ -140,9 +147,9 @@ def test_signup_has_no_plan_until_checkout_is_paid(client, unpaid_signups, fake_
     assert blocked.status_code == 402 and blocked.json()["error"]["code"] == "SUBSCRIPTION_INACTIVE"
     assert blocked.json()["error"]["message"] == "Choose a plan to start scanning."
 
-    checkout = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "starter"}, headers=headers)
+    checkout = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "starter", "phone": PHONE}, headers=headers)
     assert checkout.status_code == 200
-    subscribe(client, fake_stripe, workspace_id)
+    subscribe(client, fake_cashfree, workspace_id)
     assert billing(client, headers, workspace_id).json()["state"] == "active"
     assert client.post(f"{API}/projects", json=PROJECT, headers=headers).status_code == 200
 
@@ -153,7 +160,7 @@ def test_new_workspaces_start_without_a_plan_too(client, unpaid_signups):
     assert billing(client, headers, second).json()["state"] == "unsubscribed"
 
 
-def test_billing_endpoints_owner_only(client, fake_stripe):
+def test_billing_endpoints_owner_only(client, fake_cashfree):
     owner = signup(client, "billowner")
     workspace_id = workspace_of(client, owner)
     member_email = f"billmember-{uuid.uuid4().hex}@example.com"
@@ -165,98 +172,138 @@ def test_billing_endpoints_owner_only(client, fake_stripe):
 
     seen = billing(client, member, workspace_id)
     assert seen.status_code == 200 and seen.json()["can_manage"] is False
-    for path in ("checkout", "portal"):
-        denied = client.post(f"{API}/workspaces/{workspace_id}/billing/{path}", json={"plan": "pro"}, headers=member)
+    for path in ("checkout", "change", "cancel", "sync"):
+        denied = client.post(f"{API}/workspaces/{workspace_id}/billing/{path}", json={"plan": "pro", "phone": PHONE}, headers=member)
         assert denied.status_code == 403, path
     assert billing(client, stranger, workspace_id).status_code == 404
     assert client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "pro"}, headers=stranger).status_code == 404
 
 
-def test_checkout_returns_a_stripe_url_and_rejects_offsite_returns(client, fake_stripe):
+def test_checkout_returns_a_cashfree_session_and_rejects_offsite_returns(client, fake_cashfree):
     headers = signup(client, "checkout")
     workspace_id = workspace_of(client, headers)
     url = f"{API}/workspaces/{workspace_id}/billing/checkout"
 
-    response = client.post(url, json={"plan": "pro", "interval": "year", "return_path": "/projects/abc/billing"}, headers=headers)
-    assert response.status_code == 200 and response.json()["url"] == "https://checkout.stripe.test/session"
-    sent = fake_stripe.checkouts[-1]
-    assert sent["price"] == "price_pro_y" and sent["workspace_id"] == workspace_id
-    assert sent["success_url"] == f"{settings.app_base_url}/projects/abc/billing?checkout=success"
-    assert billing(client, headers, workspace_id).json()["has_billing_account"] is True
+    no_phone = client.post(url, json={"plan": "pro"}, headers=headers)
+    assert no_phone.status_code == 422 and no_phone.json()["error"]["code"] == "PHONE_REQUIRED"
+    assert client.post(url, json={"plan": "pro", "phone": "call me"}, headers=headers).status_code == 422
+
+    response = client.post(url, json={"plan": "pro", "interval": "year", "phone": PHONE, "return_path": "/projects/abc/billing"}, headers=headers)
+    assert response.status_code == 200 and response.json() == {"session_id": f"sub_session_{fake_cashfree.checkouts[-1]['id']}", "mode": "sandbox"}
+    sent = fake_cashfree.checkouts[-1]
+    assert sent["plan_id"] == "seenlense_pro_year_usd960" and sent["amount"] == 960 and sent["workspace_id"] == workspace_id
+    assert sent["phone"] == PHONE and sent["return_url"] == f"{settings.app_base_url}/billing/return?to=%2Fprojects%2Fabc%2Fbilling"
+    body = billing(client, headers, workspace_id).json()
+    assert body["has_billing_phone"] is True and body["has_billing_account"] is False  # nothing paid yet
+
+    again = client.post(url, json={"plan": "starter"}, headers=headers)  # the phone is remembered
+    assert again.status_code == 200 and fake_cashfree.checkouts[-1]["phone"] == PHONE
+    assert fake_cashfree.checkouts[-1]["id"] != sent["id"]  # Cashfree needs a new id per attempt
 
     for bad in ("//evil.com", "https://evil.com", "evil.com"):
         assert client.post(url, json={"plan": "pro", "return_path": bad}, headers=headers).status_code == 422, bad
     assert client.post(url, json={"plan": "enterprise"}, headers=headers).status_code == 422
 
-    portal = client.post(f"{API}/workspaces/{workspace_id}/billing/portal", json={}, headers=headers)
-    assert portal.status_code == 200 and portal.json()["url"].startswith("https://billing.stripe.test/cus_")
 
-
-def test_checkout_without_stripe_configured_says_so(client, monkeypatch):
-    monkeypatch.setattr(settings, "stripe_secret_key", "")
-    headers = signup(client, "nostripe")
+def test_checkout_without_cashfree_configured_says_so(client, monkeypatch):
+    monkeypatch.setattr(settings, "cashfree_client_secret", "")
+    headers = signup(client, "nocashfree")
     workspace_id = workspace_of(client, headers)
-    response = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "pro"}, headers=headers)
+    response = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "pro", "phone": PHONE}, headers=headers)
     assert response.status_code == 503 and response.json()["error"]["code"] == "BILLING_NOT_CONFIGURED"
-    portal = client.post(f"{API}/workspaces/{workspace_id}/billing/portal", json={}, headers=headers)
-    assert portal.status_code == 409 and portal.json()["error"]["code"] == "NO_BILLING_ACCOUNT"
+    cancel = client.post(f"{API}/workspaces/{workspace_id}/billing/cancel", headers=headers)
+    assert cancel.status_code == 409 and cancel.json()["error"]["code"] == "NO_ACTIVE_SUBSCRIPTION"
 
 
-def test_webhook_upgrade_flips_the_plan_and_blocks_a_second_checkout(client, fake_stripe):
+def test_webhook_upgrade_flips_the_plan_and_blocks_a_second_checkout(client, fake_cashfree):
     headers = signup(client, "upgrade")
     workspace_id = workspace_of(client, headers)
-    sub = subscribe(client, fake_stripe, workspace_id, plan_price="price_pro_m")
+    sub = subscribe(client, fake_cashfree, workspace_id, plan="pro")
 
     body = billing(client, headers, workspace_id).json()
     assert body["plan"] == "pro" and body["state"] == "active" and body["interval"] == "month"
     assert body["current_period_end"] is not None and body["has_billing_account"] is True
     with SessionLocal() as session:
         row = session.scalar(select(Subscription).where(Subscription.workspace_id == uuid.UUID(workspace_id)))
-        assert row.stripe_subscription_id == sub["id"] and row.stripe_customer_id == sub["customer"]
+        assert row.cashfree_subscription_id == sub["subscription_id"]
 
-    again = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "starter"}, headers=headers)
+    again = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "starter", "phone": PHONE}, headers=headers)
     assert again.status_code == 409 and again.json()["error"]["code"] == "ALREADY_SUBSCRIBED"
 
 
-def test_duplicate_event_is_ignored(client, fake_stripe):
+def test_failed_checkout_changes_nothing(client, fake_cashfree, outbox):
+    headers = signup(client, "authfail")
+    workspace_id = workspace_of(client, headers)
+    before = billing(client, headers, workspace_id).json()
+    sub = cashfree_subscription(workspace_id, status="INITIALIZED")
+    fake_cashfree.subscriptions[sub["subscription_id"]] = sub
+    post_event(client, "SUBSCRIPTION_PAYMENT_FAILED", payment(sub, payment_type="AUTH", status="FAILED"))
+    body = billing(client, headers, workspace_id).json()
+    assert body["plan"] == before["plan"] and body["has_billing_account"] is False and outbox == []
+
+
+def test_sync_activates_a_paid_checkout_without_waiting_for_the_webhook(client, fake_cashfree):
+    headers = signup(client, "sync")
+    workspace_id = workspace_of(client, headers)
+    url = f"{API}/workspaces/{workspace_id}/billing"
+    assert client.post(f"{url}/sync", headers=headers).json() == {"synced": False}  # nothing started yet
+
+    client.post(f"{url}/checkout", json={"plan": "growth", "phone": PHONE}, headers=headers)
+    pending = fake_cashfree.checkouts[-1]["id"]
+    sub = cashfree_subscription(workspace_id, status="INITIALIZED", plan="growth")
+    sub["subscription_id"] = pending
+    fake_cashfree.subscriptions[pending] = sub
+    assert client.post(f"{url}/sync", headers=headers).json() == {"synced": False}  # not paid yet
+    assert billing(client, headers, workspace_id).json()["has_billing_account"] is False
+
+    sub["subscription_status"] = "ACTIVE"
+    assert client.post(f"{url}/sync", headers=headers).json() == {"synced": True}
+    body = billing(client, headers, workspace_id).json()
+    assert body["plan"] == "growth" and body["state"] == "active" and body["has_billing_account"] is True
+
+
+def test_duplicate_event_is_ignored(client, fake_cashfree):
     headers = signup(client, "dupe")
     workspace_id = workspace_of(client, headers)
-    sub = stripe_subscription(workspace_id)
-    fake_stripe.subscriptions[sub["id"]] = sub
-    event_id = f"evt_{uuid.uuid4().hex}"
-    first = post_event(client, "customer.subscription.created", sub, event_id=event_id)
-    second = post_event(client, "customer.subscription.created", sub, event_id=event_id)
-    assert first.json()["result"] == "applied" and second.json()["result"] == "duplicate"
-    assert fake_stripe.retrieved.count(sub["id"]) == 1
+    sub = cashfree_subscription(workspace_id)
+    fake_cashfree.subscriptions[sub["subscription_id"]] = sub
+    payload = json.dumps({"data": payment(sub), "event_time": "2026-11-11T10:00:00+05:30", "type": "SUBSCRIPTION_PAYMENT_SUCCESS"})
+    signature = base64.b64encode(hmac.new(SECRET.encode(), ("1" + payload).encode(), hashlib.sha256).digest()).decode()
+    send = lambda: client.post("/api/v1/billing/webhook", content=payload, headers={"x-webhook-signature": signature, "x-webhook-timestamp": "1"})
+    assert send().json()["result"] == "applied" and send().json()["result"] == "duplicate"
+    assert fake_cashfree.retrieved.count(sub["subscription_id"]) == 1
     with SessionLocal() as session:
-        assert session.get(StripeEvent, event_id).type == "customer.subscription.created"
+        assert session.get(BillingEvent, "cf_" + hashlib.sha256(payload.encode()).hexdigest()).type == "SUBSCRIPTION_PAYMENT_SUCCESS"
 
 
-def test_bad_or_missing_signature_is_rejected(client, fake_stripe):
-    assert post_event(client, "customer.subscription.updated", {"id": "sub_x"}, secret="whsec_wrong").status_code == 400
-    unsigned = client.post("/api/v1/billing/webhook", content=json.dumps({"id": "evt_x", "type": "x", "data": {"object": {}}}))
+def test_bad_or_missing_signature_is_rejected(client, fake_cashfree):
+    assert post_event(client, "SUBSCRIPTION_STATUS_CHANGED", {"subscription_id": "x"}, secret="wrong").status_code == 400
+    unsigned = client.post("/api/v1/billing/webhook", content=json.dumps({"type": "x", "data": {}}))
     assert unsigned.status_code == 400 and unsigned.json()["error"]["code"] == "INVALID_SIGNATURE"
-    assert fake_stripe.retrieved == []
+    assert fake_cashfree.retrieved == []
 
 
-def test_unrelated_event_is_recorded_and_ignored(client, fake_stripe):
-    assert post_event(client, "customer.created", {"id": "cus_new"}).json()["result"] == "ignored"
+def test_unrelated_event_is_recorded_and_ignored(client, fake_cashfree):
+    assert post_event(client, "SUBSCRIPTION_REFUND_STATUS", {"subscription_id": "x"}).json()["result"] == "ignored"
 
 
-def test_payment_failed_gives_a_grace_period_then_lapses(client, fake_stripe, outbox):
+def test_payment_failed_gives_a_grace_period_then_lapses(client, fake_cashfree, outbox):
     headers = signup(client, "pastdue")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    sub = subscribe(client, fake_stripe, workspace_id)
+    sub = subscribe(client, fake_cashfree, workspace_id)
 
-    fake_stripe.subscriptions[sub["id"]]["status"] = "past_due"
-    invoice = {"object": "invoice", "parent": {"subscription_details": {"subscription": sub["id"]}}}
-    assert post_event(client, "invoice.payment_failed", invoice).json()["result"] == "applied"
+    # UPI AutoPay keeps the subscription ACTIVE while Cashfree retries; the failed charge alone makes it past due.
+    assert post_event(client, "SUBSCRIPTION_PAYMENT_FAILED", payment(sub, status="FAILED")).json()["result"] == "applied"
     body = billing(client, headers, workspace_id).json()
     assert body["state"] == "past_due" and body["can_write"] is True
     grace = datetime.fromisoformat(body["grace_ends_at"]) - datetime.now(timezone.utc)
     assert timedelta(days=6, hours=23) < grace <= timedelta(days=7)
     assert outbox and outbox[-1][1] == "Your payment failed"
+
+    fake_cashfree.subscriptions[sub["subscription_id"]]["subscription_status"] = "ON_HOLD"  # cards: retries are over
+    post_event(client, "SUBSCRIPTION_STATUS_CHANGED", {"subscription_details": {"subscription_id": sub["subscription_id"]}})
+    assert billing(client, headers, workspace_id).json()["grace_ends_at"] == body["grace_ends_at"]  # the clock is not reset
 
     set_subscription(workspace_id, grace_ends_at=datetime.now(timezone.utc) - timedelta(minutes=1))
     body = billing(client, headers, workspace_id).json()
@@ -266,27 +313,73 @@ def test_payment_failed_gives_a_grace_period_then_lapses(client, fake_stripe, ou
     assert blocked.json()["error"]["code"] == "SUBSCRIPTION_INACTIVE" and blocked.json()["error"]["limit"] == "subscription"
     assert client.get(f"{API}/projects/{project_id}/dashboard", headers=headers).status_code == 200  # still readable
 
-    fake_stripe.subscriptions[sub["id"]]["status"] = "active"  # the card was updated and the retry paid
-    assert post_event(client, "invoice.paid", {"object": "invoice", "subscription": sub["id"]}).json()["result"] == "applied"
+    fake_cashfree.subscriptions[sub["subscription_id"]]["subscription_status"] = "ACTIVE"  # the retry paid
+    assert post_event(client, "SUBSCRIPTION_PAYMENT_SUCCESS", payment(sub)).json()["result"] == "applied"
     body = billing(client, headers, workspace_id).json()
     assert body["state"] == "active" and body["grace_ends_at"] is None
 
 
-def test_canceled_subscription_lapses_and_a_late_event_cannot_undo_a_newer_one(client, fake_stripe):
+def test_cancel_keeps_the_paid_period_then_lapses(client, fake_cashfree):
     headers = signup(client, "cancel")
     workspace_id = workspace_of(client, headers)
-    old = subscribe(client, fake_stripe, workspace_id)
-    fake_stripe.subscriptions[old["id"]]["status"] = "canceled"
-    post_event(client, "customer.subscription.deleted", old)
+    old = subscribe(client, fake_cashfree, workspace_id)
+
+    canceled = client.post(f"{API}/workspaces/{workspace_id}/billing/cancel", headers=headers)
+    assert canceled.status_code == 200 and fake_cashfree.managed[-1] == (old["subscription_id"], "CANCEL", None)
+    body = billing(client, headers, workspace_id).json()
+    assert body["state"] == "active" and body["cancel_at_period_end"] is True and body["current_period_end"] is not None
+    assert client.post(f"{API}/workspaces/{workspace_id}/billing/cancel", headers=headers).status_code == 409
+
+    set_subscription(workspace_id, current_period_end=datetime.now(timezone.utc) - timedelta(minutes=1))
     assert billing(client, headers, workspace_id).json()["state"] == "lapsed"
 
-    new = subscribe(client, fake_stripe, workspace_id, plan_price="price_pro_y")
-    post_event(client, "customer.subscription.deleted", old)  # redelivered late, different event id
+    new = subscribe(client, fake_cashfree, workspace_id, plan="pro", interval="year")
+    post_event(client, "SUBSCRIPTION_STATUS_CHANGED", {"subscription_id": old["subscription_id"]})  # late event for the old one
     body = billing(client, headers, workspace_id).json()
-    assert body["plan"] == "pro" and body["state"] == "active"
+    assert body["plan"] == "pro" and body["state"] == "active" and body["cancel_at_period_end"] is False
     with SessionLocal() as session:
-        current = session.scalar(select(Subscription.stripe_subscription_id).where(Subscription.workspace_id == uuid.UUID(workspace_id)))
-    assert current == new["id"]
+        current = session.scalar(select(Subscription.cashfree_subscription_id).where(Subscription.workspace_id == uuid.UUID(workspace_id)))
+    assert current == new["subscription_id"]
+
+
+def test_downgrade_changes_the_plan_in_place(client, fake_cashfree):
+    headers = signup(client, "downgrade")
+    workspace_id = workspace_of(client, headers)
+    url = f"{API}/workspaces/{workspace_id}/billing/change"
+    assert client.post(url, json={"plan": "pro"}, headers=headers).status_code == 409  # nothing to change yet
+    sub = subscribe(client, fake_cashfree, workspace_id, plan="pro", interval="year")
+
+    same = client.post(url, json={"plan": "pro", "interval": "year"}, headers=headers)
+    assert same.status_code == 409 and same.json()["error"]["code"] == "SAME_PLAN"
+    changed = client.post(url, json={"plan": "growth", "interval": "month"}, headers=headers)
+    assert changed.status_code == 200 and changed.json() == {"plan": "growth", "interval": "month"}
+    assert fake_cashfree.managed[-1] == (sub["subscription_id"], "CHANGE_PLAN", "seenlense_growth_month_usd50")
+    body = billing(client, headers, workspace_id).json()
+    assert body["plan"] == "growth" and body["interval"] == "month" and body["limits"]["schedules"] is True
+
+
+def test_upgrade_is_a_new_checkout_and_cancels_the_old_subscription_once_paid(client, fake_cashfree):
+    headers = signup(client, "upgradeplan")
+    workspace_id = workspace_of(client, headers)
+    client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "starter", "phone": PHONE}, headers=headers)
+    old = subscribe(client, fake_cashfree, workspace_id)
+
+    # Cashfree never raises a mandate above what was approved, so a dearer plan goes through checkout.
+    response = client.post(f"{API}/workspaces/{workspace_id}/billing/change", json={"plan": "pro", "interval": "year"}, headers=headers)
+    assert response.status_code == 200 and response.json()["session_id"].startswith("sub_session_")
+    assert fake_cashfree.managed == [] and fake_cashfree.checkouts[-1]["plan_id"] == "seenlense_pro_year_usd960"
+    assert billing(client, headers, workspace_id).json()["plan"] == "starter"  # nothing changes until it is paid
+
+    new = cashfree_subscription(workspace_id, plan="pro", interval="year")
+    new["subscription_id"] = fake_cashfree.checkouts[-1]["id"]
+    fake_cashfree.subscriptions[new["subscription_id"]] = new
+    assert client.post(f"{API}/workspaces/{workspace_id}/billing/sync", headers=headers).json() == {"synced": True}
+    assert fake_cashfree.managed == [(old["subscription_id"], "CANCEL", None)]
+    body = billing(client, headers, workspace_id).json()
+    assert body["plan"] == "pro" and body["interval"] == "year" and body["state"] == "active"
+
+    post_event(client, "SUBSCRIPTION_STATUS_CHANGED", {"subscription_id": old["subscription_id"]})  # the old one's cancel
+    assert billing(client, headers, workspace_id).json()["plan"] == "pro"
 
 
 def test_expired_legacy_trial_is_read_only(client):
@@ -313,11 +406,11 @@ def test_expired_legacy_trial_is_read_only(client):
         assert client.get(f"{API}/projects/{project_id}{path}", headers=headers).status_code == 200, path
 
 
-def test_starter_limits_are_enforced(client, fake_stripe):
+def test_starter_limits_are_enforced(client, fake_cashfree):
     headers = signup(client, "starter")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)  # two competitors
-    subscribe(client, fake_stripe, workspace_id)
+    subscribe(client, fake_cashfree, workspace_id)
     assert billing(client, headers, workspace_id).json()["plan"] == "starter"
     pid = uuid.UUID(project_id)
 
@@ -377,11 +470,11 @@ def test_plans_set_prompts_credits_and_engines():
     assert set(PLANS["pro"].allowed_engines) == {"chatgpt_search", "perplexity", "claude", "gemini", "deepseek", "llama", "mistral"}
 
 
-def test_a_scan_is_charged_credits_by_engine(client, fake_stripe):
+def test_a_scan_is_charged_credits_by_engine(client, fake_cashfree):
     headers = signup(client, "credits")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id, plan_price="price_pro_m")
+    subscribe(client, fake_cashfree, workspace_id, plan="pro")
     engines = ["chatgpt_search", "perplexity", "claude", "gemini"]
     assert client.put(f"{API}/projects/{project_id}", json={"engines": engines}, headers=headers).status_code == 200
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
@@ -396,11 +489,11 @@ def test_a_scan_is_charged_credits_by_engine(client, fake_stripe):
     assert body["limits"]["credits_per_month"] == 3300 and "answers_per_month" not in body["limits"]
 
 
-def test_monthly_credit_cap_refuses_a_scan_that_would_go_over(client, fake_stripe):
+def test_monthly_credit_cap_refuses_a_scan_that_would_go_over(client, fake_cashfree):
     headers = signup(client, "credits-cap")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id)  # Starter: 650 credits in any 30 days
+    subscribe(client, fake_cashfree, workspace_id)  # Starter: 650 credits in any 30 days
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
     needed = 1.5  # one prompt on ChatGPT Search (1) and Perplexity (0.5)
@@ -424,11 +517,11 @@ def test_monthly_credit_cap_refuses_a_scan_that_would_go_over(client, fake_strip
     assert allowed.status_code == 200 and allowed.json()["credits"] == needed and allowed.json()["total_runs"] == 2
 
 
-def test_credits_roll_off_after_30_days(client, fake_stripe):
+def test_credits_roll_off_after_30_days(client, fake_cashfree):
     headers = signup(client, "credits-roll")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id)
+    subscribe(client, fake_cashfree, workspace_id)
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
     with SessionLocal() as session:  # a full month's credits, a month ago
@@ -439,11 +532,11 @@ def test_credits_roll_off_after_30_days(client, fake_stripe):
     assert client.post(f"{API}/projects/{project_id}/scans", headers=headers).status_code == 200
 
 
-def test_prompt_pool_is_shared_by_every_project(client, fake_stripe):
+def test_prompt_pool_is_shared_by_every_project(client, fake_cashfree):
     headers = signup(client, "pool")
     workspace_id = workspace_of(client, headers)
     first = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id)  # Starter: 50 prompts in total
+    subscribe(client, fake_cashfree, workspace_id)  # Starter: 50 prompts in total
     second = client.post(f"{API}/projects", json=PROJECT, headers=headers).json()["id"]
     with SessionLocal() as session:
         session.add_all([Prompt(project_id=uuid.UUID(first), text=f"prompt {i}", category="CATEGORY",
@@ -464,11 +557,11 @@ def test_prompt_pool_is_shared_by_every_project(client, fake_stripe):
     assert toggled.status_code == 409 and toggled.json()["error"]["details"]["holders"][0]["project_id"] == first
 
 
-def test_pool_error_lists_every_project_holding_it(client, fake_stripe):
+def test_pool_error_lists_every_project_holding_it(client, fake_cashfree):
     headers = signup(client, "poolmany")
     workspace_id = workspace_of(client, headers)
     first = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id)
+    subscribe(client, fake_cashfree, workspace_id)
     second = client.post(f"{API}/projects", json={**PROJECT, "brand_name": "Bachatt"}, headers=headers).json()["id"]
     with SessionLocal() as session:
         for project, count in ((first, 30), (second, 20)):
@@ -483,21 +576,21 @@ def test_pool_error_lists_every_project_holding_it(client, fake_stripe):
     assert accepted["inactive"] == 1 and len(accepted["pool_full"]["holders"]) == 2
 
 
-def test_growth_checkout_and_limits(client, fake_stripe):
+def test_growth_checkout_and_limits(client, fake_cashfree):
     headers = signup(client, "growth")
     workspace_id = workspace_of(client, headers)
-    response = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "growth", "interval": "year"}, headers=headers)
-    assert response.status_code == 200 and fake_stripe.checkouts[-1]["price"] == "price_growth_y"
-    subscribe(client, fake_stripe, workspace_id, plan_price="price_growth_m")
+    response = client.post(f"{API}/workspaces/{workspace_id}/billing/checkout", json={"plan": "growth", "interval": "year", "phone": PHONE}, headers=headers)
+    assert response.status_code == 200 and fake_cashfree.checkouts[-1]["plan_id"] == "seenlense_growth_year_usd480"
+    subscribe(client, fake_cashfree, workspace_id, plan="growth")
     body = billing(client, headers, workspace_id).json()
     assert body["plan"] == "growth" and body["limits"]["projects"] == 4 and body["limits"]["schedules"] is True
 
 
-def test_pro_allows_what_starter_does_not(client, fake_stripe):
+def test_pro_allows_what_starter_does_not(client, fake_cashfree):
     headers = signup(client, "pro")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    subscribe(client, fake_stripe, workspace_id, plan_price="price_pro_m")
+    subscribe(client, fake_cashfree, workspace_id, plan="pro")
     assert client.post(f"{API}/projects", json=PROJECT, headers=headers).status_code == 200
     assert client.put(f"{API}/projects/{project_id}/schedule", json={"enabled": True}, headers=headers).status_code == 200
 
@@ -518,7 +611,7 @@ def test_trial_notices_are_sent_once(client, outbox):
     assert outbox.count((email, "Your trial has ended")) == 1
 
 
-def test_retention_follows_each_workspaces_plan(client, fake_stripe):
+def test_retention_follows_each_workspaces_plan(client, fake_cashfree):
     def scanned(prefix):
         headers = signup(client, prefix)
         project_id = make_project(client, headers)
@@ -527,7 +620,7 @@ def test_retention_follows_each_workspaces_plan(client, fake_stripe):
         return workspace_of(client, headers), scan_id
 
     starter_ws, starter_scan = scanned("retstarter")
-    subscribe(client, fake_stripe, starter_ws)
+    subscribe(client, fake_cashfree, starter_ws)
     _, pro_scan = scanned("retpro")
     seven_months_ago = datetime.now(timezone.utc) - timedelta(days=210)
     with SessionLocal() as session:

@@ -32,7 +32,7 @@ def daily_budget_off(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_real_ai_keys(monkeypatch):
     """Keys in a developer's .env must never be used by tests: real AI calls cost money."""
-    for key in ("openrouter_api_key", "dataforseo_login", "dataforseo_password", "resend_api_key", "stripe_secret_key"):
+    for key in ("openrouter_api_key", "dataforseo_login", "dataforseo_password", "resend_api_key", "cashfree_client_id", "cashfree_client_secret"):
         monkeypatch.setattr(settings, key, "")
 
 
