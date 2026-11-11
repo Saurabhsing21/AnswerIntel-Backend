@@ -59,3 +59,5 @@ services:
         sync: false
       - key: FORWARDED_ALLOW_IPS     # Render's proxy, so uvicorn sees Paddle's real address for the webhook IP check
         sync: false
+      - key: PADDLE_WEBHOOK_IP_CHECK # true once FORWARDED_ALLOW_IPS is verified on staging; false skips the IP check (the signature still applies)
+        sync: false
