@@ -1,7 +1,7 @@
 """Plans and what each one allows. The single source for every per-workspace limit.
 
 A new account's own workspace starts on the free trial: one project and one scan, no card. Any other workspace
-has no plan until it pays. "trial" rows exist only for workspaces that predate billing and run out on their own. This file holds the prices (Cashfree plans are created from them) and the limits. The frontend copy for the pricing section is
+has no plan until it pays. "trial" rows exist only for workspaces that predate billing and run out on their own. Paddle holds the prices (each carries {plan, interval} in custom_data); this file holds the limits. The frontend copy for the pricing section is
 frontend/lib/billing/plans.ts; keep the two in step when a number changes. The global settings
 (max_active_prompts, max_competitors, max_scans_per_day, raw_response_retention_days) stay as hard
 ceilings: a plan can only lower them.
@@ -37,7 +37,7 @@ class Plan:
     retention_days: int
     schedules: bool
     experiments: bool
-    price_monthly: int = 0  # in settings.cashfree_currency; Cashfree plans are made from these
+    price_monthly: int = 0  # USD, display only; the Paddle catalog charges
     price_yearly: int = 0
     scans_total: int | None = None  # scans ever, per workspace; only the free trial has one
     pro: bool = True  # drafts, re-tests, reports, exports, invites, alerts, more prompts: everything past the free trial
@@ -136,9 +136,8 @@ def state_of(sub: Subscription | None, now: datetime) -> str:
         return "active"
     if sub.status == "past_due" and (sub.grace_ends_at is None or sub.grace_ends_at > now):
         return "past_due"
-    if sub.status == "canceled" and sub.current_period_end and sub.current_period_end > now:
-        return "active"  # canceled, but the period already paid for has not ended
-    return "lapsed"  # canceled, paused, incomplete_expired, or past_due beyond the grace period
+    # Paddle keeps a subscription active until a scheduled cancel takes effect, so canceled really means over.
+    return "lapsed"  # canceled, paused, or past_due beyond the grace period
 
 
 def entitlements_for(sub: Subscription | None, now: datetime | None = None) -> Entitlements:

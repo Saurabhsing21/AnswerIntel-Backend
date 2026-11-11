@@ -91,18 +91,17 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from: str = "SeenLense <saurabh@seenlense.com>"
 
-    # Billing (Cashfree Subscriptions). Empty keys = checkout is disabled and the API says so. The client secret
-    # also signs webhooks. Plans are created in Cashfree on first use from app/billing/plans.py prices.
-    cashfree_client_id: str = ""
-    cashfree_client_secret: str = ""
-    cashfree_env: str = "sandbox"  # sandbox | production
-    cashfree_currency: str = "USD"
+    # Billing (Paddle). Checkout runs in the browser; payments reach a workspace through the signed webhook, so an
+    # empty PADDLE_WEBHOOK_SECRET means billing is off. PADDLE_API_KEY powers the portal and plan changes.
+    paddle_env: str = ""  # sandbox | production; required once a Paddle key or secret is set, never guessed
+    paddle_api_key: str = ""
+    paddle_webhook_secret: str = ""
     # File storage (Cloudflare R2). Any value missing = report PDFs stay in the database.
     r2_account_id: str = ""
     r2_bucket: str = ""
     r2_access_key_id: str = ""
     r2_secret_access_key: str = ""
-    app_base_url: str = "http://localhost:3000"  # where Cashfree sends people back after checkout
+    app_base_url: str = "http://localhost:3000"  # links in billing emails and the customer portal's way back
 
     model_config = {
         "env_file": (".env", "../.env.local"),  # later files win: Neon's .env.local overrides backend/.env
@@ -119,9 +118,11 @@ class Settings(BaseSettings):
         # A guessable signing secret lets anyone mint valid tokens, so production refuses to boot with one.
         if self.app_env == "production" and (len(self.jwt_secret_key) < 32 or "change-this" in self.jwt_secret_key.lower()):
             raise ValueError("JWT_SECRET_KEY must be a random value of at least 32 characters when APP_ENV=production.")
-        # Sandbox keys in production would show a test checkout that never takes real money.
-        if self.app_env == "production" and self.billing_enabled and self.cashfree_env != "production":
-            raise ValueError("CASHFREE_ENV must be production when Cashfree keys are set and APP_ENV=production.")
+        # Never guess the Paddle environment: the wrong one sends requests to the wrong account.
+        if (self.paddle_api_key or self.paddle_webhook_secret) and self.paddle_env not in ("sandbox", "production"):
+            raise ValueError("PADDLE_ENV must be sandbox or production when a Paddle key or webhook secret is set.")
+        if self.app_env == "production" and self.billing_enabled and self.paddle_env != "production":
+            raise ValueError("PADDLE_ENV must be production when APP_ENV=production.")
         # Without a key no scan or AI feature can run: never acceptable for paying users.
         # The waitlist-only launch site has no scans, so it may run without one.
         if self.app_env == "production" and not self.waitlist_only and not self.openrouter_api_key.strip():
@@ -146,7 +147,7 @@ class Settings(BaseSettings):
 
     @property
     def billing_enabled(self) -> bool:
-        return bool(self.cashfree_client_id.strip() and self.cashfree_client_secret.strip())
+        return bool(self.paddle_webhook_secret.strip())
 
     @property
     def r2_enabled(self) -> bool:

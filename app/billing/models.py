@@ -8,8 +8,8 @@ from app.common.database import Base
 
 
 class Subscription(Base):
-    """One per workspace. Cashfree owns payment state; this row mirrors it, and app/billing/plans.py turns it into
-    limits. Written by signup/workspace creation (trial), the Cashfree webhook and the owner's cancel/change."""
+    """One per workspace. Paddle owns payment state; this row mirrors it from verified webhooks, and
+    app/billing/plans.py turns it into limits. Also written by signup/workspace creation (trial) and plan changes."""
 
     __tablename__ = "subscriptions"
 
@@ -19,8 +19,7 @@ class Subscription(Base):
     )
     plan: Mapped[str] = mapped_column(String(20), nullable=False)  # trial | starter | pro
     interval: Mapped[str | None] = mapped_column(String(10), nullable=True)  # month | year; none on a trial
-    # Cashfree's subscription status mapped to active, past_due, canceled, paused, incomplete, ... (service.py),
-    # or "trialing" for the card-free trial.
+    # Paddle's subscription status (active, trialing, past_due, paused, canceled), or "none" before the first payment.
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -29,11 +28,28 @@ class Subscription(Base):
     grace_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Last trial email sent (trial_ending, trial_ended), so the daily job never sends one twice.
     notified: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    cashfree_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
-    # The latest checkout, not yet confirmed: synced from Cashfree when the owner returns, in case a webhook is late.
-    cashfree_pending_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Cashfree requires a phone number for every subscription; asked once at the first checkout.
-    billing_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    paddle_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    paddle_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    paddle_price_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    paddle_product_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # A change Paddle will make later, e.g. cancel at the end of the period. Access holds until it happens.
+    scheduled_change_action: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    scheduled_change_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When Paddle last changed the subscription, so an older event delivered late never overwrites a newer one.
+    paddle_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class PaddleCustomer(Base):
+    """Paddle customers, mirrored from customer.created/updated. A workspace's row points here by paddle_customer_id."""
+
+    __tablename__ = "paddle_customers"
+
+    customer_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -41,8 +57,7 @@ class Subscription(Base):
 
 
 class BillingEvent(Base):
-    """Webhook events already handled. Cashfree retries and may deliver an event more than once; it sends no event
-    id, so the id is a hash of the payload."""
+    """Paddle webhook events already handled (by Paddle's event id). Deliveries are at-least-once."""
 
     __tablename__ = "billing_events"
 

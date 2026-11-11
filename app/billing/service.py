@@ -5,9 +5,8 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.billing import cashfree_client
-from app.billing.cashfree_client import plan_of
-from app.billing.models import Subscription
+from app.billing import paddle_client
+from app.billing.models import PaddleCustomer, Subscription
 from app.billing.plans import GRACE_DAYS, PLANS
 from app.competitors.models import Competitor
 from app.projects.models import Project
@@ -17,8 +16,9 @@ from app.workspaces.models import WorkspaceMember
 
 log = logging.getLogger(__name__)
 
-# A subscription in one of these states never replaces the one a workspace already has.
-_NOT_LIVE = ("incomplete", "incomplete_expired", "canceled", "paused")
+# A subscription in a _NOT_LIVE state never replaces the one a workspace already has.
+_NOT_LIVE = ("canceled", "paused")
+_LIVE = ("active", "trialing")
 
 
 def open_billing(session: Session, workspace_id: UUID, trial: bool = False) -> Subscription:
@@ -106,42 +106,21 @@ def usage(session: Session, workspace_id: UUID) -> dict:
     }
 
 
-def price_for(plan: str, interval: str) -> int:
-    """What a plan costs per period, in settings.cashfree_currency."""
-    return PLANS[plan].price_yearly if interval == "year" else PLANS[plan].price_monthly
-
-
-# Cashfree subscription status -> ours. ON_HOLD is a renewal charge that failed (cards and eNACH).
-_STATUS = {
-    "ACTIVE": "active",
-    "ON_HOLD": "past_due",
-    "PAUSED": "paused",
-    "CUSTOMER_PAUSED": "paused",
-    "CANCELLED": "canceled",
-    "CUSTOMER_CANCELLED": "canceled",
-    "EXPIRED": "canceled",
-    "COMPLETED": "canceled",
-    "CARD_EXPIRED": "canceled",
-    "INITIALIZED": "incomplete",
-    "BANK_APPROVAL_PENDING": "incomplete",
-    "LINK_EXPIRED": "incomplete_expired",
-}
-_IST = timezone(timedelta(hours=5, minutes=30))
-
-
 def _timestamp(value: str | None) -> datetime | None:
-    """Cashfree sends ISO times, sometimes without an offset; those are IST."""
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=_IST)
+    return datetime.fromisoformat(value) if value else None
+
+
+def apply_paddle_customer(session: Session, data: dict) -> PaddleCustomer:
+    """Upsert keyed on Paddle's customer id, so a redelivered or reordered event just writes the same row again."""
+    customer = session.get(PaddleCustomer, data["id"]) or PaddleCustomer(customer_id=data["id"])
+    customer.email = data.get("email") or customer.email
+    session.add(customer)
+    return customer
 
 
 def find_subscription(session: Session, data: dict) -> Subscription | None:
-    workspace_id = (data.get("subscription_tags") or {}).get("workspace_id")
+    """The workspace a Paddle subscription belongs to: named in custom_data at checkout, or already linked."""
+    workspace_id = (data.get("custom_data") or {}).get("workspace_id")
     if workspace_id:
         try:
             sub = session.scalar(select(Subscription).where(Subscription.workspace_id == UUID(workspace_id)))
@@ -149,53 +128,51 @@ def find_subscription(session: Session, data: dict) -> Subscription | None:
             sub = None
         if sub:
             return sub
-    return session.scalar(select(Subscription).where(Subscription.cashfree_subscription_id == data["subscription_id"]))
+    return session.scalar(select(Subscription).where(Subscription.paddle_subscription_id == data["id"]))
 
 
-def apply_cashfree_subscription(session: Session, data: dict, charge_failed: bool = False,
-                                now: datetime | None = None) -> Subscription | None:
-    """Mirror a Cashfree subscription onto the workspace's row. Status always comes from Cashfree, except that a
-    failed renewal charge counts as past_due while Cashfree still retries it (UPI AutoPay stays ACTIVE meanwhile)."""
+def apply_paddle_subscription(session: Session, data: dict, now: datetime | None = None) -> tuple[Subscription | None, str | None]:
+    """Mirror a Paddle subscription (webhook payload or API response) onto its workspace's row. Status always comes
+    from Paddle. Returns the row and the id of a different live subscription it replaced, which the caller cancels
+    once this is committed so nobody pays twice."""
     now = now or datetime.now(timezone.utc)
     sub = find_subscription(session, data)
     if not sub:
-        log.warning("Cashfree subscription %s matches no workspace", data.get("subscription_id"))
-        return None
-    status = _STATUS.get(data.get("subscription_status", ""), (data.get("subscription_status") or "").lower())
-    if sub.cashfree_subscription_id != data["subscription_id"] and status in _NOT_LIVE:
-        # A late event for an old subscription, or a checkout that never paid: keep what the workspace has.
-        log.info("Ignoring %s subscription %s for workspace %s", status, data["subscription_id"], sub.workspace_id)
-        return sub
-    pair = plan_of((data.get("plan_details") or {}).get("plan_id"))
-    if not pair:
-        log.error("Cashfree subscription %s is on a plan that is not ours", data["subscription_id"])
-        return sub
-    if charge_failed and status == "active":
-        status = "past_due"
-    sub.plan, sub.interval = pair
-    sub.status = status
-    sub.cashfree_subscription_id = data["subscription_id"]
-    # The next charge date is the end of the paid period; a canceled subscription has none, so keep the last one.
-    sub.current_period_end = (
-        _timestamp(data.get("next_schedule_date")) or _timestamp(data.get("subscription_first_charge_time"))
-        or sub.current_period_end
-    )
-    # Cashfree cancels at once; the period already paid for still runs to its end (plans.state_of).
-    sub.cancel_at_period_end = status == "canceled"
+        log.warning("Paddle subscription %s matches no workspace", data.get("id"))
+        return None, None
+    status = data.get("status", "")
+    same = sub.paddle_subscription_id == data["id"]
+    if not same and status in _NOT_LIVE:
+        # A late event for an old subscription: keep what the workspace has.
+        log.info("Ignoring %s subscription %s for workspace %s", status, data["id"], sub.workspace_id)
+        return sub, None
+    changed_at = _timestamp(data.get("updated_at"))
+    if same and changed_at and sub.paddle_updated_at and changed_at < sub.paddle_updated_at:
+        log.info("Ignoring out-of-date copy of subscription %s", data["id"])
+        return sub, None
+    price = ((data.get("items") or [{}])[0].get("price") or {})
+    plan, interval = (price.get("custom_data") or {}).get("plan"), (price.get("custom_data") or {}).get("interval")
+    if plan not in PLANS or interval not in ("month", "year"):
+        log.error("Paddle subscription %s uses price %s, which has no plan in its custom_data", data["id"], price.get("id"))
+        return sub, None
+    replaced = sub.paddle_subscription_id if (
+        sub.paddle_subscription_id and not same and sub.status in _LIVE and status in _LIVE
+    ) else None
+    sub.plan, sub.interval, sub.status = plan, interval, status
+    sub.paddle_subscription_id = data["id"]
+    sub.paddle_customer_id = data.get("customer_id") or sub.paddle_customer_id
+    sub.paddle_price_id, sub.paddle_product_id = price.get("id"), price.get("product_id")
+    sub.paddle_updated_at = changed_at
+    period = data.get("current_billing_period") or {}
+    sub.current_period_end = _timestamp(period.get("ends_at")) or _timestamp(data.get("next_billed_at")) or sub.current_period_end
+    change = data.get("scheduled_change") or {}
+    sub.scheduled_change_action = change.get("action")
+    sub.scheduled_change_at = _timestamp(change.get("effective_at"))
+    sub.cancel_at_period_end = change.get("action") == "cancel"
     if status == "past_due":
         sub.grace_ends_at = sub.grace_ends_at or now + timedelta(days=GRACE_DAYS)
-    elif status == "active":
+    elif status in _LIVE:
         sub.grace_ends_at = None
-    return sub
-
-
-def apply_and_replace(session: Session, data: dict, charge_failed: bool = False) -> tuple[Subscription | None, str | None]:
-    """apply_cashfree_subscription, plus the id of the subscription it replaced (an upgrade paid through a new
-    checkout), which the caller cancels in Cashfree once this is committed so nobody pays for both."""
-    existing = find_subscription(session, data)
-    old = existing.cashfree_subscription_id if existing else None
-    sub = apply_cashfree_subscription(session, data, charge_failed=charge_failed)
-    replaced = old if sub and old and old != sub.cashfree_subscription_id and sub.status == "active" else None
     return sub, replaced
 
 
@@ -203,7 +180,6 @@ def cancel_replaced(subscription_id: str | None) -> None:
     if not subscription_id:
         return
     try:
-        cashfree_client.cancel_subscription(subscription_id)
+        paddle_client.cancel_subscription(subscription_id)
     except Exception:  # the new plan is live either way; this needs a person to cancel it by hand
-        log.error("Could not cancel replaced Cashfree subscription %s", subscription_id, exc_info=True)
-
+        log.error("Could not cancel replaced Paddle subscription %s", subscription_id, exc_info=True)

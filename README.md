@@ -64,7 +64,7 @@ app refuses to start with a weak `JWT_SECRET_KEY`.
 
 ## The product loop
 
-register (from a pricing plan) -> Cashfree checkout -> workspace subscribed -> project -> competitors (plan limit) -> `POST /prompts/generate` ->
+register (from a pricing plan) -> Paddle checkout -> workspace subscribed -> project -> competitors (plan limit) -> `POST /prompts/generate` ->
 review prompts -> `POST /scans` (queued; poll `GET /scans/{id}`) -> `GET /dashboard`, `/scans/{id}/results`,
 `/citations`, `/competitors/analysis`, `/opportunities` -> `POST /experiments` (baseline) -> change the site ->
 re-scan -> `POST /experiments/{id}/complete` -> `POST /reports` (share, export HTML/PDF, email).
@@ -88,35 +88,36 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 | `experiments` | Baseline and follow-up snapshots with before/after comparison |
 | `reports` | Weekly/monthly/manual reports, share links, HTML/PDF export, Resend email |
 | `waitlist` | Public landing-page signups (idempotent, rate limited) |
-| `billing` | Plans and entitlements (every limit), Cashfree checkout, plan change and cancel, webhook, billing emails |
+| `billing` | Plans and entitlements (every limit), Paddle webhook (mirrors subscriptions and customers), customer portal, plan change, billing emails |
 | `common` | Config, database, errors, rate limiting, safe HTTP fetcher, observability |
 
-## Billing (Cashfree)
+## Billing (Paddle)
 
-There is no free plan (only the one-off free check on the website). A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Cashfree Subscriptions
-(the website's pricing buttons go to `/register?plan=...`, which continues straight to checkout; an unpaid account
-sees a "Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
+There is no free plan (only the one-off free check on the website). A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Paddle
+(the website's pricing buttons open Paddle's checkout, after sign-up for new visitors; an unpaid account sees a
+"Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
 runs out on its own. Each plan has a prompt pool shared by its projects and a monthly AI-answer allowance (prompt × engine) that
-every scan draws from; that allowance is what bounds model cost. Limits and prices live in `app/billing/plans.py`. Without `CASHFREE_CLIENT_ID`/`CASHFREE_CLIENT_SECRET` checkout says billing is off.
+every scan draws from; that allowance is what bounds model cost. Limits live in `app/billing/plans.py`; prices live in Paddle.
 
-How it works: checkout creates a Cashfree subscription on a periodic plan (`seenlense_<plan>_<interval>_usd<price>`,
-created in Cashfree on first use, so a price change makes a new plan and never edits a live one) and the browser opens
-Cashfree's hosted checkout. The authorisation charges the first period in full; Cashfree charges every renewal itself.
-Cashfree requires a phone number, asked once at the first checkout. There is no customer portal: the owner changes
-plan (`/billing/change`, Cashfree `CHANGE_PLAN`, new limits now and new price from the next renewal) or cancels
-(`/billing/cancel`, everything keeps working until the paid period ends) in the app.
+How it works: checkout runs in the browser (Paddle.js, overlay) with `custom_data.workspace_id`. Paddle's signed
+webhook (`POST /api/v1/billing/webhook`) is the only thing that grants a plan: `subscription.*` events are mirrored onto
+the workspace's `subscriptions` row (keyed by Paddle id, older copies never overwrite newer ones), `customer.*` onto
+`paddle_customers`, duplicates are skipped by event id. Each Paddle price carries `{"plan", "interval"}` in its
+custom_data, which is how a subscription maps to a plan. Access: `active` and `trialing` grant it, a scheduled cancel
+keeps it until Paddle actually cancels, `past_due` keeps it for a 7-day grace, `paused` and `canceled` make the
+workspace read-only. The owner opens Paddle's customer portal (`/billing/portal`: invoices, card, cancel) and changes
+plan in the app (`/billing/change`, prorated by Paddle).
 
 Setup:
 
-1. Put the test keys in `CASHFREE_CLIENT_ID`/`CASHFREE_CLIENT_SECRET` with `CASHFREE_ENV=sandbox`. Charging in USD needs
-   International Payments enabled on the account (sandbox allows it).
-2. Webhooks: in the Cashfree dashboard (Developers -> Webhooks, Subscriptions) add `<API URL>/api/v1/billing/webhook`
-   (Cashfree calls the API directly, not through the Next.js proxy). Locally, expose port 8000 with
-   `ngrok http 8000` and use the ngrok URL. Events used: `SUBSCRIPTION_STATUS_CHANGED`, `SUBSCRIPTION_AUTH_STATUS`,
-   `SUBSCRIPTION_PAYMENT_SUCCESS`, `SUBSCRIPTION_PAYMENT_FAILED`.
-3. Set `APP_BASE_URL` to the dashboard URL (checkout returns there).
-4. Try it: subscribe and approve the sandbox payment (plan flips to the paid tier), change plan, cancel (stays active
-   until the period ends). A failed renewal makes it past due with a 7-day grace, then read-only.
+1. Set `PADDLE_ENV=sandbox`, `PADDLE_API_KEY` (pdl_sdbx_apikey_..., needs subscription, customer portal and price read
+   access) and `PADDLE_WEBHOOK_SECRET`. Without the secret billing is off.
+2. Webhooks: create a notification destination (Paddle > Developer tools > Notifications) for
+   `<API URL>/api/v1/billing/webhook` with `subscription.*`, `customer.created`, `customer.updated` and
+   `transaction.completed`, and copy its secret. Locally, expose port 8000 with `ngrok http 8000`.
+3. Frontend: `NEXT_PUBLIC_PADDLE_ENV` and `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN`; price ids per environment are in
+   `frontend/lib/billing/paddle.ts`.
+4. Try it: subscribe with 4242 4242 4242 4242 (declined: 4000 0000 0000 0002), then change plan and cancel in the portal.
 
 A failed payment emails the owners from the webhook. Celery beat also sends "trial ends in 3 days" and "trial
 ended" emails daily (`billing.trial_notices`), only for the legacy trials. Both use Resend and are skipped when it is not configured.

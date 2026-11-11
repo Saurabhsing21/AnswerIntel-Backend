@@ -2453,13 +2453,13 @@ updated_at TIMESTAMP
 # 83. Billing Architecture
 
 Billing is built (it reverses the earlier "do not build billing yet" note): every scan costs real LLM
-money, so limits follow a paid plan per workspace. Cashfree Subscriptions is the payment provider.
+money, so limits follow a paid plan per workspace. Paddle is the payment provider (merchant of record).
 
-Plans (limits and prices in `app/billing/plans.py`; Cashfree plans are created from them):
+Plans (limits in `app/billing/plans.py`, prices in Paddle):
 
 ```text
 None     a new workspace before it pays: nothing allowed. There is no free plan or free trial;
-         people pick a plan on the website, sign up and pay in Cashfree's hosted checkout.
+         people pick a plan on the website, sign up and pay in Paddle's checkout.
 Trial    legacy only: workspaces that predate billing got 14 days with Pro limits, once.
 Starter  $20/mo or $192/yr: 30 prompts (one pool for the workspace), 520 AI answers a month, 2 projects,
          20 competitors per project, unlimited seats, 6-month retention, no experiments.
@@ -2490,24 +2490,29 @@ id SERIAL PK
 workspace_id UUID UNIQUE FK
 plan VARCHAR             -- none | starter | growth | pro (trial: legacy)
 interval VARCHAR         -- month | year
-status VARCHAR           -- Cashfree status mapped to ours; none before the first payment
+status VARCHAR           -- Paddle status; none before the first payment
 trial_ends_at, current_period_end, grace_ends_at TIMESTAMPTZ
 cancel_at_period_end BOOLEAN
 notified VARCHAR         -- last trial email sent
-cashfree_subscription_id VARCHAR UNIQUE
-billing_phone VARCHAR    -- Cashfree requires one per subscription
+paddle_subscription_id VARCHAR UNIQUE, paddle_customer_id, paddle_price_id, paddle_product_id VARCHAR
+scheduled_change_action VARCHAR, scheduled_change_at TIMESTAMPTZ
+paddle_updated_at TIMESTAMPTZ  -- older webhook copies never overwrite newer ones
+
+paddle_customers
+----------------
+customer_id VARCHAR PK, email VARCHAR, created_at, updated_at
 
 billing_events
 --------------
-id VARCHAR PK            -- hash of the webhook body (Cashfree sends no event id); makes webhooks idempotent
+id VARCHAR PK            -- Paddle event id; makes webhooks idempotent
 type VARCHAR
 created_at TIMESTAMPTZ
 ```
 
-Flow: `POST /workspaces/{id}/billing/checkout` (owner) returns a Cashfree subscription session id for the hosted
-checkout; `POST .../billing/change` switches plan (Cashfree CHANGE_PLAN) and `POST .../billing/cancel` stops renewals
-(active until the paid period ends); `GET /workspaces/{id}/billing` shows plan, status and usage to every member. Cashfree calls
-`POST /api/v1/billing/webhook` (signature checked, not rate limited). The plan always comes from Cashfree's
+Flow: checkout runs in the browser (Paddle.js) with the workspace id in custom_data; `POST .../billing/portal` (owner)
+returns a Paddle customer portal link (invoices, card, cancel) and `POST .../billing/change` switches plan (prorated);
+`GET /workspaces/{id}/billing` shows plan, status and usage to every member. Paddle calls
+`POST /api/v1/billing/webhook` (signature checked, not rate limited). The plan always comes from Paddle's
 subscription object, never from the browser redirect. Refused actions return `PLAN_LIMIT` or
 `SUBSCRIPTION_INACTIVE` (402) or the older `SCAN_LIMIT_REACHED`, `PROMPT_LIMIT`, `COMPETITOR_LIMIT`, each
 with `error.limit` naming the limit so the UI can offer an upgrade.

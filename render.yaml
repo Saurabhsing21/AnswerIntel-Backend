@@ -42,7 +42,7 @@ services:
         sync: false
       - key: CORS_ORIGINS            # your Vercel frontend URL, e.g. https://seenlense.com
         sync: false
-      - key: APP_BASE_URL            # same Vercel URL (Cashfree return + email links)
+      - key: APP_BASE_URL            # same Vercel URL (email links)
         sync: false
       # --- optional: leave unset to disable the feature ---
       - key: RESEND_AUDIENCE_ID      # waitlist
@@ -51,9 +51,9 @@ services:
         sync: false
       - key: SENTRY_DSN              # error monitoring
         sync: false
-      - key: CASHFREE_CLIENT_ID      # billing (optional until you sell plans)
-        sync: false
-      - key: CASHFREE_CLIENT_SECRET
-        sync: false
-      - key: CASHFREE_ENV            # production with live keys
+      - key: PADDLE_ENV              # billing (optional until you sell plans); production with live keys
         value: production
+      - key: PADDLE_API_KEY
+        sync: false
+      - key: PADDLE_WEBHOOK_SECRET   # from the live notification destination
+        sync: false

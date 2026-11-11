@@ -27,7 +27,7 @@ from app.schedules.models import ScanSchedule
 from app.waitlist.models import WaitlistSignup
 from app.auth.models import RefreshToken
 from app.workspaces.models import Workspace, WorkspaceMember
-from app.billing.models import BillingEvent, Subscription
+from app.billing.models import BillingEvent, PaddleCustomer, Subscription
 from app.freecheck.models import FreeCheck
 from app.costs.models import AICall
 from app.prompts.models import Prompt
