@@ -16,7 +16,7 @@ from sqlalchemy import select, text, update
 from app.billing import paddle_client
 from app.billing.emails import send_trial_notices
 from app.billing.models import BillingEvent, PaddleCustomer, Subscription
-from app.billing.plans import PLANS, credits_for
+from app.billing.plans import ENGINE_CREDITS, PLANS, credits_for, entitlements_for
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.competitors.models import Competitor
@@ -452,11 +452,38 @@ def test_credit_weights_per_engine():
 
 def test_plans_set_prompts_credits_and_engines():
     table = {key: (PLANS[key].active_prompts, PLANS[key].credits_per_month) for key in ("free", "starter", "growth", "pro", "trial")}
-    assert table == {"free": (10, 10), "starter": (50, 650), "growth": (120, 1650), "pro": (200, 3300), "trial": (120, 1650)}
+    assert table == {"free": (10, 10), "starter": (50, 900), "growth": (120, 2200), "pro": (200, 4400), "trial": (120, 1650)}
+    assert {key: PLANS[key].credits_yearly for key in ("starter", "growth", "pro")} == {"starter": 800, "growth": 2000, "pro": 4000}
     assert PLANS["free"].allowed_engines == ("chatgpt_search",)
-    assert PLANS["starter"].allowed_engines == ("chatgpt_search", "perplexity")
-    assert PLANS["growth"].allowed_engines == PLANS["trial"].allowed_engines == ("chatgpt_search", "perplexity", "claude")
+    assert PLANS["starter"].allowed_engines == ("chatgpt_search", "perplexity", "gemini")
+    assert PLANS["growth"].allowed_engines == PLANS["trial"].allowed_engines == ("chatgpt_search", "perplexity", "gemini", "claude")
     assert set(PLANS["pro"].allowed_engines) == {"chatgpt_search", "perplexity", "claude", "gemini", "deepseek", "llama", "mistral"}
+
+
+
+def test_a_yearly_subscription_gets_the_yearly_credits():
+    def credits(plan, interval):
+        return entitlements_for(Subscription(plan=plan, status="active", interval=interval)).credits_per_month
+    assert [credits(p, "month") for p in ("starter", "growth", "pro")] == [900, 2200, 4400]
+    assert [credits(p, "year") for p in ("starter", "growth", "pro")] == [800, 2000, 4000]
+
+
+@pytest.mark.parametrize("key", ["starter", "growth", "pro"])
+@pytest.mark.parametrize("interval", ["month", "year"])
+def test_every_plan_keeps_a_30_to_40_percent_margin(key, interval):
+    """The cost rule: even spending every credit on the costliest engine per credit, AI plus Paddle's fee
+    (5% + $0.50 a payment) leaves us 30-40% of what the customer pays. Each plan's credits still cover weekly
+    tracking of every prompt on every engine it includes."""
+    plan = PLANS[key]
+    yearly = interval == "year"
+    paid = Decimal(plan.price_yearly) / 12 if yearly else Decimal(plan.price_monthly)
+    fee = (Decimal(plan.price_yearly if yearly else plan.price_monthly) * Decimal("0.05") + Decimal("0.5")) / (12 if yearly else 1)
+    credits = plan.credits_yearly if yearly else plan.credits_per_month
+    worst = credits * Decimal("0.0138") + fee
+    assert Decimal("0.30") <= 1 - worst / paid <= Decimal("0.40")
+    weekly = plan.active_prompts * sum(ENGINE_CREDITS[e] for e in plan.allowed_engines) * 4.3
+    assert weekly <= credits
+    assert paid * Decimal(str(settings.workspace_cost_cap_ratio)) + fee <= paid * Decimal("0.70")  # the spend cap holds the floor
 
 
 def test_a_scan_is_charged_credits_by_engine(client, fake_paddle):
@@ -475,19 +502,19 @@ def test_a_scan_is_charged_credits_by_engine(client, fake_paddle):
         assert session.get(Scan, scan["id"]).credits == Decimal("3.25")
     body = billing(client, headers, workspace_id).json()
     assert body["usage"]["credits_30_days"] == 3.25 and "answers_30_days" not in body["usage"]
-    assert body["limits"]["credits_per_month"] == 3300 and "answers_per_month" not in body["limits"]
+    assert body["limits"]["credits_per_month"] == 4400 and "answers_per_month" not in body["limits"]
 
 
 def test_monthly_credit_cap_refuses_a_scan_that_would_go_over(client, fake_paddle):
     headers = signup(client, "credits-cap")
     workspace_id = workspace_of(client, headers)
     project_id = make_project(client, headers)
-    subscribe(client, fake_paddle, workspace_id)  # Starter: 650 credits in any 30 days
+    subscribe(client, fake_paddle, workspace_id)  # Starter: 900 credits in any 30 days
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
     needed = 1.5  # one prompt on ChatGPT Search (1) and Perplexity (0.5)
     with SessionLocal() as session:  # older scans (not today, so the daily guard stays out of it)
-        old = Scan(project_id=uuid.UUID(project_id), status="completed", total_runs=500, credits=Decimal("648.75"),
+        old = Scan(project_id=uuid.UUID(project_id), status="completed", total_runs=500, credits=Decimal("898.75"),
                    created_at=datetime.now(timezone.utc) - timedelta(days=3))
         session.add(old)
         session.commit()
@@ -496,11 +523,11 @@ def test_monthly_credit_cap_refuses_a_scan_that_would_go_over(client, fake_paddl
     blocked = client.post(f"{API}/projects/{project_id}/scans", headers=headers)
     error = blocked.json()["error"]
     assert blocked.status_code == 402 and error["code"] == "PLAN_LIMIT" and error["limit"] == "credits_per_month"
-    assert error["message"].startswith("This scan needs 1.5 credits and 1.25 are left of your 650")
-    assert billing(client, headers, workspace_id).json()["usage"]["credits_30_days"] == 648.75
+    assert error["message"].startswith("This scan needs 1.5 credits and 1.25 are left of your 900")
+    assert billing(client, headers, workspace_id).json()["usage"]["credits_30_days"] == 898.75
 
     with SessionLocal() as session:  # exactly what is left still fits
-        session.execute(update(Scan).where(Scan.id == old_id).values(credits=650 - needed))
+        session.execute(update(Scan).where(Scan.id == old_id).values(credits=900 - needed))
         session.commit()
     allowed = client.post(f"{API}/projects/{project_id}/scans", headers=headers)
     assert allowed.status_code == 200 and allowed.json()["credits"] == needed and allowed.json()["total_runs"] == 2
@@ -514,7 +541,7 @@ def test_credits_roll_off_after_30_days(client, fake_paddle):
     prompt = {"text": "best crm for startups", "category": "CATEGORY", "intent": "DISCOVERY"}
     client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
     with SessionLocal() as session:  # a full month's credits, a month ago
-        session.add(Scan(project_id=uuid.UUID(project_id), status="completed", credits=650,
+        session.add(Scan(project_id=uuid.UUID(project_id), status="completed", credits=900,
                          created_at=datetime.now(timezone.utc) - timedelta(days=31)))
         session.commit()
     assert billing(client, headers, workspace_id).json()["usage"]["credits_30_days"] == 0

@@ -39,24 +39,28 @@ class Plan:
     experiments: bool
     price_monthly: int = 0  # USD, display only; the Paddle catalog charges
     price_yearly: int = 0
+    credits_yearly: int | None = None  # credits_per_month on a yearly subscription (it pays less a month); None = the same
     scans_total: int | None = None  # scans ever, per workspace; only the free trial has one
     pro: bool = True  # drafts, re-tests, reports, exports, invites, alerts, more prompts: everything past the free trial
 
 
 FREE_ENGINES = ("chatgpt_search",)
-STARTER_ENGINES = FREE_ENGINES + ("perplexity",)
+STARTER_ENGINES = FREE_ENGINES + ("perplexity", "gemini")  # every paid plan covers ChatGPT, Perplexity and Google
 GROWTH_ENGINES = STARTER_ENGINES + ("claude",)  # Claude answers from model memory, no web search
-PRO_ENGINES = GROWTH_ENGINES + ("gemini", "deepseek", "llama", "mistral")
+PRO_ENGINES = GROWTH_ENGINES + ("deepseek", "llama", "mistral")
 
 # Plans are priced in credits: 1 credit = 1 ChatGPT Search answer, and every answer (prompt x engine) a scan asks for
-# costs its engine's weight below, counted over any 30 days. Credits enforce the cost rule: what a paying user can cost
-# us (AI + payment fee) is at most 50% of a monthly price and 60% of a yearly one (20% off), for any engine mix.
+# costs its engine's weight below, counted over any 30 days. Credits enforce the cost rule: we keep a 30-40% margin.
+# What a paying user can cost us (AI + Paddle's 5% + $0.50 fee) is at most 70% of what they pay a month, for any
+# engine mix, monthly or yearly (10% off, so yearly plans get fewer credits).
 # The weights follow what one answer costs us, analysis included: ChatGPT Search ~$0.0135, Gemini ~$0.0161,
 # Perplexity ~$0.0069, Claude ~$0.0047, DeepSeek/Llama/Mistral ~$0.001-0.002. Each weight is that cost over
 # ChatGPT Search's, rounded so that one credit never costs more than ~$0.0138 whatever the engine. So the worst case is
-# credits_per_month x $0.0138 (Pro: 3300 x $0.0138 = $45.5, plus a ~$4 card fee, under $50 of $100).
+# credits x $0.0138 + the fee: Starter 900 x $0.0138 + $1.50 = $13.92 of $20 (30% margin); Growth $33.36 of $50 (33%);
+# Pro $66.22 of $100 (34%); yearly Starter $11.98 of $18, Growth $29.89 of $45, Pro $59.74 of $90 (all 33%).
+# The workspace cost cap (settings.workspace_cost_cap_ratio, 62% of the price) holds the floor if real costs drift.
 # An engine missing here costs a full credit. Engines widen with the plan: ChatGPT Search on the free trial,
-# + Perplexity on Starter, + Claude on Growth, + Gemini, DeepSeek, Llama and Mistral on Pro.
+# + Perplexity and Gemini on Starter, + Claude on Growth, + DeepSeek, Llama and Mistral on Pro.
 ENGINE_CREDITS = {
     "chatgpt_search": 1, "gemini": 1.25, "perplexity": 0.5, "claude": 0.5, "deepseek": 0.25, "llama": 0.25, "mistral": 0.25,
 }
@@ -67,17 +71,18 @@ def credits_for(engine_key: str) -> float:
     return ENGINE_CREDITS.get(engine_key, 1)
 
 
-# Same mechanism as Peec AI: one prompt pool, automatic weekly tracking, a monthly cap. Yearly = 20% off, so it is a
-# whole number a month.
-STARTER = Plan("starter", "Starter", projects=2, active_prompts=50, credits_per_month=650, competitors=20,
+# Same mechanism as Peec AI: one prompt pool, automatic weekly tracking, a monthly cap. Yearly = 10% off, so it is a
+# whole number a month. Each plan's credits cover weekly tracking of every prompt on every engine, with room for
+# on-demand scans.
+STARTER = Plan("starter", "Starter", projects=2, active_prompts=50, credits_per_month=900, competitors=20,
                allowed_engines=STARTER_ENGINES, scans_per_day=2, seats=None, retention_days=183, schedules=True, experiments=False,
-               price_monthly=20, price_yearly=192)
-GROWTH = Plan("growth", "Growth", projects=4, active_prompts=120, credits_per_month=1650, competitors=50,
+               price_monthly=20, price_yearly=216, credits_yearly=800)
+GROWTH = Plan("growth", "Growth", projects=4, active_prompts=120, credits_per_month=2200, competitors=50,
               allowed_engines=GROWTH_ENGINES, scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True,
-              price_monthly=50, price_yearly=480)
-PRO = Plan("pro", "Pro", projects=10, active_prompts=200, credits_per_month=3300, competitors=100,
+              price_monthly=50, price_yearly=540, credits_yearly=2000)
+PRO = Plan("pro", "Pro", projects=10, active_prompts=200, credits_per_month=4400, competitors=100,
            allowed_engines=PRO_ENGINES, scans_per_day=10, seats=None, retention_days=730, schedules=True, experiments=True,
-           price_monthly=100, price_yearly=960)
+           price_monthly=100, price_yearly=1080, credits_yearly=4000)
 TRIAL = Plan("trial", "Trial", projects=4, active_prompts=120, credits_per_month=1650, competitors=50, allowed_engines=GROWTH_ENGINES,
              scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True)  # legacy, ends on its own
 # The free trial: one full scan of one brand, so people see their own results before paying. Cost: at most
@@ -151,7 +156,7 @@ def entitlements_for(sub: Subscription | None, now: datetime | None = None) -> E
         can_write=state not in ("lapsed", "unsubscribed"),
         projects=plan.projects,
         active_prompts=plan.active_prompts,
-        credits_per_month=plan.credits_per_month,
+        credits_per_month=plan.credits_yearly if sub and sub.interval == "year" and plan.credits_yearly else plan.credits_per_month,
         competitors=min(plan.competitors, settings.max_competitors),
         allowed_engines=plan.allowed_engines,
         scans_per_day=plan.scans_per_day,

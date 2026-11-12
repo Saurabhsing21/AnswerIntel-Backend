@@ -127,13 +127,13 @@ def workspace_spend_this_month(session, workspace_id: UUID) -> Decimal:
 
 
 def paid_per_month(plan_key: str, interval: str | None) -> Decimal:
-    """What a subscription pays a month: a yearly price (20% off) spread over twelve months."""
+    """What a subscription pays a month: a yearly price (10% off) spread over twelve months."""
     plan = PLANS.get(plan_key, NONE)
     return Decimal(plan.price_yearly) / 12 if interval == "year" else Decimal(plan.price_monthly)
 
 
 def paid_cap(plan_key: str, interval: str | None) -> Decimal:
-    """A subscription's monthly AI spend cap: the cost rule allows 50% of a monthly price, 60% of a yearly one."""
+    """A subscription's monthly AI spend cap: the cost rule allows 62% of what it pays a month, monthly or yearly."""
     ratio = settings.workspace_cost_cap_ratio_yearly if interval == "year" else settings.workspace_cost_cap_ratio
     return paid_per_month(plan_key, interval) * Decimal(str(ratio))
 

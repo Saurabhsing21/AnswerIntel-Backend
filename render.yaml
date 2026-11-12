@@ -22,7 +22,7 @@ services:
       - key: WAITLIST_ONLY
         value: "false"
       - key: FREE_CHECK_ENABLED
-        value: "false"
+        value: "true"
       - key: SCAN_CONCURRENCY
         value: "2"            # 512MB free instance: keep concurrency low so a scan does not run out of memory
       # --- secrets: set these in the Render dashboard ---
