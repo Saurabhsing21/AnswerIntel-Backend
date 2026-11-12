@@ -79,14 +79,14 @@ def test_trial_scans_chatgpt_search_only_and_other_engines_name_their_plan(clien
     claude = client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt_search", "claude"]}, headers=headers)
     assert claude.json()["error"]["message"] == "Claude is on the Growth plan."
     gemini = client.put(f"{API}/projects/{project_id}", json={"engines": ["gemini"]}, headers=headers)
-    assert gemini.json()["error"]["message"] == "Gemini is on the Pro plan."
+    assert gemini.json()["error"]["message"] == "Gemini is on the Starter plan."
     assert client.put(f"{API}/projects/{project_id}", json={"engines": ["chatgpt_search"]}, headers=headers).status_code == 200
 
     workspace = client.get(f"{API}/workspaces", headers=headers).json()[0]["id"]
     limits = client.get(f"{API}/workspaces/{workspace}/billing", headers=headers).json()["limits"]
     assert limits["allowed_engines"] == ["chatgpt_search"]
     assert limits["engine_upgrades"]["perplexity"] == "starter" and limits["engine_upgrades"]["claude"] == "growth"
-    assert limits["engine_upgrades"]["gemini"] == "pro" and "chatgpt_search" not in limits["locked_engines"]
+    assert limits["engine_upgrades"]["gemini"] == "starter" and "chatgpt_search" not in limits["locked_engines"]
 
 
 def test_paid_features_answer_with_an_upgrade_on_the_trial(client, outbox, trial_signups):

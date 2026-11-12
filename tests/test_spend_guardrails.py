@@ -67,7 +67,7 @@ def test_budget_zero_disables_the_global_limit(client, monkeypatch):
 
 def test_workspace_cap_blocks_user_scans(client):
     headers, project_id = project_with_prompts(client, "cap")
-    spend(workspace_of(project_id), "60")  # test workspaces are on Pro: 60% of $100 = $60 a month
+    spend(workspace_of(project_id), "62")  # test workspaces are on Pro: 62% of $100 = $62 a month
     res = client.post(f"{API}/projects/{project_id}/scans", headers=headers)
     assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
 
@@ -75,7 +75,7 @@ def test_workspace_cap_blocks_user_scans(client):
 def test_scheduled_dispatch_skips_a_capped_workspace(client):
     headers, project_id = project_with_prompts(client, "capsched")
     enable(client, headers, project_id, day_of_week=2, hour=10)
-    spend(workspace_of(project_id), "60")
+    spend(workspace_of(project_id), "62")
     slot = next_slot(created_at(project_id), 2, 10)
     assert dispatch_due_scans(slot, lambda *a: None, project_ids=[uuid.UUID(project_id)]) == []
 
@@ -88,14 +88,14 @@ def test_retest_is_blocked_by_the_workspace_cap(client):
             break
         time.sleep(0.5)
     target = next(o for o in client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json() if o["related_prompts"])
-    spend(workspace_of(project_id), "60")
+    spend(workspace_of(project_id), "62")
     res = client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/retest", headers=headers)
     assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
 
 
 def capped_project(client, prefix):
     headers, project_id = project_with_prompts(client, prefix)
-    spend(workspace_of(project_id), "60")
+    spend(workspace_of(project_id), "62")
     return headers, project_id
 
 
@@ -120,7 +120,7 @@ def test_opportunity_drafts_are_blocked_by_the_workspace_cap(client):
             break
         time.sleep(0.5)
     target = client.get(f"{API}/projects/{project_id}/opportunities", headers=headers).json()[0]
-    spend(workspace_of(project_id), "60")
+    spend(workspace_of(project_id), "62")
     res = client.post(f"{API}/projects/{project_id}/opportunities/{target['id']}/draft", headers=headers)
     assert res.status_code == 402 and "WORKSPACE_COST_CAP" in res.text
 
@@ -178,25 +178,23 @@ def test_global_budget_grows_with_paid_subscriptions(monkeypatch):
     monkeypatch.setattr(settings, "workspace_cost_cap_ratio_yearly", 0.6)
     with SessionLocal() as session:
         before = costs.global_daily_budget(session)
-    subscribed_workspace("starter", "year")  # pays $16 a month: cap $9.60
+    subscribed_workspace("starter", "year")  # pays $18 a month: cap $10.80
     subscribed_workspace("pro", status="past_due")  # still counts while payment is retried: cap $50
     for plan, status in (("growth", "canceled"), ("free", "active"), ("trial", "trialing")):
         subscribed_workspace(plan, status=status)  # not paying: adds nothing
     with SessionLocal() as session:
-        assert costs.global_daily_budget(session) - before == Decimal("0.1") * (Decimal("9.6") + Decimal("50"))
+        assert costs.global_daily_budget(session) - before == Decimal("0.1") * (Decimal("10.8") + Decimal("50"))
 
 
-def test_a_cap_is_half_a_monthly_price_and_60_percent_of_a_yearly_one(monkeypatch):
-    monkeypatch.setattr(settings, "workspace_cost_cap_ratio", 0.5)
-    monkeypatch.setattr(settings, "workspace_cost_cap_ratio_yearly", 0.6)
+def test_a_cap_is_62_percent_of_what_a_workspace_pays_a_month():
     yearly, monthly = subscribed_workspace("starter", "year"), subscribed_workspace("starter")
     with SessionLocal() as session:
-        assert costs.workspace_cap(session, yearly) == Decimal("9.6")  # $192 / 12 = $16, x 0.6
-        assert costs.workspace_cap(session, monthly) == Decimal("10")  # $20 x 0.5
+        assert costs.workspace_cap(session, yearly) == Decimal("11.16")  # $216 / 12 = $18, x 0.62
+        assert costs.workspace_cap(session, monthly) == Decimal("12.4")  # $20 x 0.62
 
 
 def test_default_caps_follow_the_cost_rule():
-    assert (settings.workspace_cost_cap_ratio, settings.workspace_cost_cap_ratio_yearly) == (0.5, 0.6)
+    assert (settings.workspace_cost_cap_ratio, settings.workspace_cost_cap_ratio_yearly) == (0.62, 0.62)
 
 
 def test_spend_past_70_percent_of_the_budget_logs_once_a_day(monkeypatch, caplog):

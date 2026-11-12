@@ -16,7 +16,7 @@ def ent(plan: str):
 
 @pytest.mark.parametrize("plan,allowed", [
     ("free", ("chatgpt_search",)),
-    ("starter", ("chatgpt_search", "perplexity")),
+    ("starter", ("chatgpt_search", "perplexity", "gemini")),
     ("growth", GROWTH_ENGINES),
     ("pro", PRO_ENGINES),
     ("trial", GROWTH_ENGINES),
@@ -29,8 +29,8 @@ def test_each_plan_allows_its_engines_and_locks_the_rest_of_the_catalog(plan, al
 
 
 def test_locked_engines_name_the_cheapest_plan_that_unlocks_them():
-    pro_only = {"gemini": "pro", "deepseek": "pro", "llama": "pro", "mistral": "pro"}
-    assert ent("free").engine_upgrades == {"perplexity": "starter", "claude": "growth", **pro_only}
+    pro_only = {"deepseek": "pro", "llama": "pro", "mistral": "pro"}
+    assert ent("free").engine_upgrades == {"perplexity": "starter", "gemini": "starter", "claude": "growth", **pro_only}
     assert ent("starter").engine_upgrades == {"claude": "growth", **pro_only}
     assert ent("pro").engine_upgrades == {}
 

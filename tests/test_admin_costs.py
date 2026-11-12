@@ -133,8 +133,8 @@ def test_margin_by_plan_exact(client, admin, calls):
 
         # monthly Starter: 20 revenue, 7 spend
         assert (delta("starter", "active_workspaces"), delta("starter", "revenue"), delta("starter", "ai_spend"), delta("starter", "margin")) == (1, pytest.approx(20), pytest.approx(7), pytest.approx(13))
-        # yearly Growth: 480 / 12 = 40 revenue, 11 spend
-        assert (delta("growth", "active_workspaces"), delta("growth", "revenue"), delta("growth", "ai_spend"), delta("growth", "margin")) == (1, pytest.approx(40), pytest.approx(11), pytest.approx(29))
+        # yearly Growth: 540 / 12 = 45 revenue, 11 spend
+        assert (delta("growth", "active_workspaces"), delta("growth", "revenue"), delta("growth", "ai_spend"), delta("growth", "margin")) == (1, pytest.approx(45), pytest.approx(11), pytest.approx(34))
         # canceled Pro: no revenue, not counted, but its spend still costs us
         assert (delta("pro", "active_workspaces"), delta("pro", "revenue"), delta("pro", "ai_spend"), delta("pro", "margin")) == (0, pytest.approx(0), pytest.approx(13), pytest.approx(-13))
         # no subscription at all: spend only
