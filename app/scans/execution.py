@@ -12,7 +12,7 @@ from sqlalchemy import select, text
 from app.analysis.base import AnalysisContext
 from app.analysis.persistence import save_analysis
 from app.analysis.service import ResponseAnalysisService
-from app.billing.plans import engines_for, entitlements
+from app.billing.plans import credits_for, engines_for, entitlements
 from app.providers.models import engines_for_prompt
 from app.common.config import settings
 from app.common.database import SessionLocal
@@ -40,6 +40,13 @@ SCAN_LOCK_NAMESPACE = 7001
 
 def _backoff(seconds: float) -> None:
     time.sleep(seconds)  # separate function so tests can skip real waiting
+
+
+def settle_credits(session, scan: Scan) -> None:
+    """A scan reserves credits for every answer it plans; once it ends it keeps only those of the answers it saved,
+    so failed answers never use up the plan. Recomputed, never decremented, so it is safe to repeat."""
+    engines = session.scalars(select(AIResponseRecord.engine).where(AIResponseRecord.scan_id == scan.id)).all()
+    scan.credits = sum(credits_for(engine) for engine in engines)
 
 
 @contextmanager
@@ -86,6 +93,7 @@ class ScanExecutionService:
                         scan.error_message = exc.message if isinstance(exc, AppError) else f"Scan crashed: {exc.__class__.__name__}"
                         scan.completed_at = datetime.now(timezone.utc)
                         finalize_scan_cost(session, scan)
+                        settle_credits(session, scan)
                         session.commit()
 
     def _run(self, scan_id: int) -> None:
@@ -229,6 +237,7 @@ class ScanExecutionService:
             scan.error_message = last_error if scan.failed_runs else None
             scan.completed_at = datetime.now(timezone.utc)
             finalize_scan_cost(session, scan)
+            settle_credits(session, scan)
             if scan.kind == "retest":
                 finish_retest(session, scan)
             session.commit()
@@ -282,6 +291,7 @@ def recover_interrupted_scans() -> int:
             except Exception:  # recovery must never stop the app from starting
                 log.exception("Could not build results for interrupted scan %s", scan.id)
             finalize_scan_cost(session, scan)
+            settle_credits(session, scan)
         session.commit()
         finished = [s.id for s in stale if s.status == "partial" and s.kind == "full"]
     for scan_id in finished:

@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.common.errors import AppError
-from app.scans.execution import run_scan
+from app.scans.execution import run_scan, settle_credits
 from app.scans.models import Scan
 
 log = logging.getLogger(__name__)
@@ -30,5 +30,6 @@ def enqueue_scan(scan_id: int, background_tasks: BackgroundTasks) -> None:
                 scan.status = "failed"
                 scan.error_message = "The job queue is unavailable."
                 scan.completed_at = datetime.now(timezone.utc)
+                settle_credits(session, scan)
                 session.commit()
         raise AppError(503, "QUEUE_UNAVAILABLE", "Scans cannot be started right now. Please try again shortly.")

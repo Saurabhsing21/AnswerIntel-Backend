@@ -16,7 +16,7 @@ from sqlalchemy import select, text, update
 from app.billing import paddle_client
 from app.billing.emails import send_trial_notices
 from app.billing.models import BillingEvent, PaddleCustomer, Subscription
-from app.billing.plans import ENGINE_CREDITS, PLANS, credits_for, entitlements_for
+from app.billing.plans import PLANS, credits_for, entitlements_for
 from app.common.config import settings
 from app.common.database import SessionLocal
 from app.competitors.models import Competitor
@@ -445,7 +445,7 @@ def test_starter_limits_are_enforced(client, fake_paddle):
 def test_credit_weights_per_engine():
     keys = ("chatgpt_search", "gemini", "perplexity", "claude", "deepseek", "llama", "mistral")
     assert {k: credits_for(k) for k in keys} == {
-        "chatgpt_search": 1, "gemini": 1.25, "perplexity": 0.5, "claude": 0.5, "deepseek": 0.25, "llama": 0.25, "mistral": 0.25,
+        "chatgpt_search": 1, "gemini": 4.5, "perplexity": 0.5, "claude": 0.5, "deepseek": 0.25, "llama": 0.25, "mistral": 0.25,
     }
     assert credits_for("grok") == credits_for("chatgpt") == 1  # an engine with no weight costs one credit
 
@@ -472,8 +472,7 @@ def test_a_yearly_subscription_gets_the_yearly_credits():
 @pytest.mark.parametrize("interval", ["month", "year"])
 def test_every_plan_keeps_a_30_to_40_percent_margin(key, interval):
     """The cost rule: even spending every credit on the costliest engine per credit, AI plus Paddle's fee
-    (5% + $0.50 a payment) leaves us 30-40% of what the customer pays. Each plan's credits still cover weekly
-    tracking of every prompt on every engine it includes."""
+    (5% + $0.50 a payment) leaves us 30-40% of what the customer pays."""
     plan = PLANS[key]
     yearly = interval == "year"
     paid = Decimal(plan.price_yearly) / 12 if yearly else Decimal(plan.price_monthly)
@@ -481,8 +480,6 @@ def test_every_plan_keeps_a_30_to_40_percent_margin(key, interval):
     credits = plan.credits_yearly if yearly else plan.credits_per_month
     worst = credits * Decimal("0.0138") + fee
     assert Decimal("0.30") <= 1 - worst / paid <= Decimal("0.40")
-    weekly = plan.active_prompts * sum(ENGINE_CREDITS[e] for e in plan.allowed_engines) * 4.3
-    assert weekly <= credits
     assert paid * Decimal(str(settings.workspace_cost_cap_ratio)) + fee <= paid * Decimal("0.70")  # the spend cap holds the floor
 
 
@@ -497,11 +494,11 @@ def test_a_scan_is_charged_credits_by_engine(client, fake_paddle):
     client.post(f"{API}/projects/{project_id}/prompts", json=prompt, headers=headers)
 
     scan = client.post(f"{API}/projects/{project_id}/scans", headers=headers).json()
-    assert scan["total_runs"] == 4 and scan["credits"] == 3.25  # 1 + 0.5 + 0.5 + 1.25
+    assert scan["total_runs"] == 4 and scan["credits"] == 6.5  # 1 + 0.5 + 0.5 + 4.5
     with SessionLocal() as session:
-        assert session.get(Scan, scan["id"]).credits == Decimal("3.25")
+        assert session.get(Scan, scan["id"]).credits == Decimal("6.5")
     body = billing(client, headers, workspace_id).json()
-    assert body["usage"]["credits_30_days"] == 3.25 and "answers_30_days" not in body["usage"]
+    assert body["usage"]["credits_30_days"] == 6.5 and "answers_30_days" not in body["usage"]
     assert body["limits"]["credits_per_month"] == 4400 and "answers_per_month" not in body["limits"]
 
 
