@@ -41,12 +41,16 @@ def _queued_scan(client, headers) -> tuple[str, int]:
 def test_one_failing_engine_makes_scan_partial_not_failed(client):
     headers = signup(client, "flaky")
     _, scan_id = _queued_scan(client, headers)
+    with SessionLocal() as session:
+        prompts = session.get(Scan, scan_id).total_runs // 2
+        assert float(session.get(Scan, scan_id).credits) == prompts * 1.5  # reserved: ChatGPT Search 1 + Perplexity 0.5
     ScanService(provider=FlakyProvider({"bad-model"}), model_registry=ENGINES).run(scan_id)
     with SessionLocal() as session:
         scan = session.get(Scan, scan_id)
         assert scan.status == "partial"
         assert scan.completed_runs == scan.failed_runs == scan.total_runs // 2
         assert "provider unavailable" in scan.error_message
+        assert float(scan.credits) == prompts * 1  # only the answers that came back use credits
 
 
 def test_all_engines_failing_marks_scan_failed(client):
@@ -55,6 +59,7 @@ def test_all_engines_failing_marks_scan_failed(client):
     ScanService(provider=FlakyProvider({"good-model", "bad-model"}), model_registry=ENGINES).run(scan_id)
     with SessionLocal() as session:
         assert session.get(Scan, scan_id).status == "failed"
+        assert session.get(Scan, scan_id).credits == 0  # a scan with no answers costs nothing
 
 
 def test_scan_runs_at_most_once(client):

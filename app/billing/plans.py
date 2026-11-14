@@ -53,7 +53,8 @@ PRO_ENGINES = GROWTH_ENGINES + ("deepseek", "llama", "mistral")
 # costs its engine's weight below, counted over any 30 days. Credits enforce the cost rule: we keep a 30-40% margin.
 # What a paying user can cost us (AI + Paddle's 5% + $0.50 fee) is at most 70% of what they pay a month, for any
 # engine mix, monthly or yearly (10% off, so yearly plans get fewer credits).
-# The weights follow what one answer costs us, analysis included: ChatGPT Search ~$0.0135, Gemini ~$0.0161,
+# The weights follow what one answer costs us, analysis included: ChatGPT Search ~$0.0135, Gemini ~$0.0606
+# (measured in production on 2026-11-14: Google bills each of its 2-4 searches per answer, so it is the costliest),
 # Perplexity ~$0.0069, Claude ~$0.0047, DeepSeek/Llama/Mistral ~$0.001-0.002. Each weight is that cost over
 # ChatGPT Search's, rounded so that one credit never costs more than ~$0.0138 whatever the engine. So the worst case is
 # credits x $0.0138 + the fee: Starter 900 x $0.0138 + $1.50 = $13.92 of $20 (30% margin); Growth $33.36 of $50 (33%);
@@ -62,7 +63,7 @@ PRO_ENGINES = GROWTH_ENGINES + ("deepseek", "llama", "mistral")
 # An engine missing here costs a full credit. Engines widen with the plan: ChatGPT Search on the free trial,
 # + Perplexity and Gemini on Starter, + Claude on Growth, + DeepSeek, Llama and Mistral on Pro.
 ENGINE_CREDITS = {
-    "chatgpt_search": 1, "gemini": 1.25, "perplexity": 0.5, "claude": 0.5, "deepseek": 0.25, "llama": 0.25, "mistral": 0.25,
+    "chatgpt_search": 1, "gemini": 4.5, "perplexity": 0.5, "claude": 0.5, "deepseek": 0.25, "llama": 0.25, "mistral": 0.25,
 }
 
 
@@ -72,8 +73,8 @@ def credits_for(engine_key: str) -> float:
 
 
 # Same mechanism as Peec AI: one prompt pool, automatic weekly tracking, a monthly cap. Yearly = 10% off, so it is a
-# whole number a month. Each plan's credits cover weekly tracking of every prompt on every engine, with room for
-# on-demand scans.
+# whole number a month. Each plan's credits cover weekly tracking of every prompt on ChatGPT Search and Perplexity;
+# Gemini costs the most per answer, so a plan tracks only some of its prompts there weekly.
 STARTER = Plan("starter", "Starter", projects=2, active_prompts=50, credits_per_month=900, competitors=20,
                allowed_engines=STARTER_ENGINES, scans_per_day=2, seats=None, retention_days=183, schedules=True, experiments=False,
                price_monthly=20, price_yearly=216, credits_yearly=800)
