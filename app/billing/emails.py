@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 
 def notify_owners(
-    session, workspace_id: UUID, subject: str, body: str, *, path: str = "/projects", button: str = "Open SeenLense",
+    session, workspace_id: UUID, subject: str, body: str, *, path: str = "/projects", button: str = "Open Seenlense",
     stats: list[tuple[str, str]] | None = None, items: list[str] | None = None,
 ) -> int:
     """Returns how many owners were emailed. Email being off or failing never breaks billing."""
@@ -34,7 +34,7 @@ def notify_owners(
             send_report_email(email, subject, email_html(
                 heading=subject, paragraphs=[body], eyebrow=name, stats=stats, items=items, preheader=body,
                 button=(button, f"{settings.app_base_url.rstrip('/')}{path}"),
-                footer=f"You get this because you own {name} on SeenLense.",
+                footer=f"You get this because you own {name} on Seenlense.",
             ))
             sent += 1
         except AppError as exc:
@@ -47,7 +47,7 @@ def send_payment_failed(workspace_id: UUID, grace_ends_at: datetime | None) -> N
     with SessionLocal() as session:
         notify_owners(
             session, workspace_id, "Your payment failed",
-            f"We could not charge your card for SeenLense. Update your payment method{when} to keep scanning; "
+            f"We could not charge your card for Seenlense. Update your payment method{when} to keep scanning; "
             "after that the workspace becomes read-only.",
         )
 
@@ -66,12 +66,12 @@ def send_trial_notices(now: datetime) -> dict:
         for sub in trials:
             if sub.trial_ends_at <= now:
                 notice, subject, body = "trial_ended", "Your trial has ended", (
-                    "Your SeenLense trial is over. Your data is still here and you can view and export it. "
+                    "Your Seenlense trial is over. Your data is still here and you can view and export it. "
                     "Choose a plan to start scanning again."
                 )
             elif sub.notified is None:
                 notice, subject, body = "trial_ending", "Your trial ends in 3 days", (
-                    f"Your SeenLense trial ends on {sub.trial_ends_at:%B %d}. Choose a plan to keep your scans running."
+                    f"Your Seenlense trial ends on {sub.trial_ends_at:%B %d}. Choose a plan to keep your scans running."
                 )
             else:
                 continue
@@ -99,7 +99,7 @@ def _free_email(step: str, scanned: bool) -> tuple[str, str]:
         )
     if step == "free_day3":
         return "AI answers change every week", (
-            "One scan is a snapshot. On a plan, SeenLense re-asks every question weekly, emails you when a competitor "
+            "One scan is a snapshot. On a plan, Seenlense re-asks every question weekly, emails you when a competitor "
             "overtakes you, and proves which fixes worked. Plans start at $20 a month."
         )
     return "Keep tracking your AI visibility", (

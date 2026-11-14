@@ -8,20 +8,20 @@ from app.reports.email import send_report_email
 
 log = logging.getLogger(__name__)
 
-SUBJECT = "You're on the SeenLense waitlist"
+SUBJECT = "You're on the Seenlense waitlist"
 
 
 def render(site: str) -> str:
     return email_html(
         heading="You're on the list.",
         paragraphs=[
-            "Thanks for joining. SeenLense shows you when ChatGPT, Perplexity, Gemini and Google AI recommend your brand, "
+            "Thanks for joining. Seenlense shows you when ChatGPT, Perplexity, Gemini and Google AI recommend your brand, "
             "when they pick a competitor instead, and what to fix.",
             "We're opening access in small groups. We'll email you as soon as your spot is ready, and your first scan is on us.",
         ],
         eyebrow="Waitlist",
-        button=("Visit SeenLense", site),
-        footer="You got this because this address joined the SeenLense waitlist.",
+        button=("Visit Seenlense", site),
+        footer="You got this because this address joined the Seenlense waitlist.",
         preheader="Thanks for joining. We'll email you when your spot is ready.",
     )
 

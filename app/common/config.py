@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     # Google Identity Services web client ID. Empty = "Continue with Google" is hidden.
     google_client_id: str = ""
     resend_api_key: str = ""
-    email_from: str = "SeenLense <saurabh@seenlense.com>"
+    email_from: str = "Seenlense <saurabh@seenlense.com>"
 
     # Billing (Paddle). Checkout runs in the browser; payments reach a workspace through the signed webhook, so an
     # empty PADDLE_WEBHOOK_SECRET means billing is off. PADDLE_API_KEY powers the portal and plan changes.
