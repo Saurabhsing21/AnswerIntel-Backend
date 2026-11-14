@@ -50,6 +50,16 @@ def test_one_scan_after_confirming_the_email_then_the_limit(client, outbox, tria
     assert second.json()["error"]["limit"] == "scans_total"
 
 
+def test_the_trial_tracks_one_competitor(client, trial_signups):
+    headers = signup(client, "trial")
+    project_id = make_project(client, headers, competitors=())
+    assert billing_of(client, headers)["limits"]["competitors"] == 1
+    first = client.post(f"{API}/projects/{project_id}/competitors", json={"name": "Orbit", "website": "https://orbit.io"}, headers=headers)
+    assert first.status_code == 200, first.text
+    second = client.post(f"{API}/projects/{project_id}/competitors", json={"name": "Nimbus", "website": "https://nimbus.io"}, headers=headers)
+    assert second.status_code == 409 and second.json()["error"]["code"] == "COMPETITOR_LIMIT"
+
+
 def test_the_trial_is_one_project_and_extra_workspaces_get_no_trial(client, trial_signups):
     headers = signup(client, "trial")
     make_project(client, headers, competitors=())

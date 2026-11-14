@@ -88,7 +88,7 @@ TRIAL = Plan("trial", "Trial", projects=4, active_prompts=120, credits_per_month
              scans_per_day=4, seats=None, retention_days=365, schedules=True, experiments=True)  # legacy, ends on its own
 # The free trial: one full scan of one brand, so people see their own results before paying. Cost: at most
 # 10 prompts on ChatGPT Search (10 credits), about $0.14, and only after the email address is confirmed.
-FREE = Plan("free", "Free trial", projects=1, active_prompts=10, credits_per_month=10, competitors=3, allowed_engines=FREE_ENGINES,
+FREE = Plan("free", "Free trial", projects=1, active_prompts=10, credits_per_month=10, competitors=1, allowed_engines=FREE_ENGINES,
             scans_per_day=1, seats=None, retention_days=365, schedules=False, experiments=False, scans_total=1,
             pro=False)
 # A workspace that has not paid yet: nothing allowed. Retention stays at the ceiling so nothing is purged early.
