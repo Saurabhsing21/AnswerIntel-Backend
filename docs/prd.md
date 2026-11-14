@@ -1,4 +1,4 @@
-# SeenLense — Product PRD
+# Seenlense — Product PRD
 
 # 1. Product Vision
 

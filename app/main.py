@@ -35,7 +35,7 @@ async def lifespan(_: FastAPI):
 # No public API docs in production or while only the waitlist is open.
 _hide_docs = settings.app_env == "production" or settings.waitlist_only
 app = FastAPI(
-    title="SeenLense API",
+    title="Seenlense API",
     lifespan=lifespan,
     docs_url=None if _hide_docs else "/docs",
     redoc_url=None if _hide_docs else "/redoc",

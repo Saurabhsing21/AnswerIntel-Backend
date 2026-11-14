@@ -22,14 +22,14 @@ function Shell({ doc, children }: { doc: Doc; children: React.ReactNode }) {
       <View fixed style={{ position: "absolute", top: 20, left: 40, right: 40, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           <Logo size={4.5} />
-          <Text style={{ fontSize: 8, fontWeight: 700, marginLeft: 4 }}>SeenLense</Text>
+          <Text style={{ fontSize: 8, fontWeight: 700, marginLeft: 4 }}>Seenlense</Text>
           <Text style={{ fontSize: 7, color: C.muted, marginLeft: 5 }}>{doc.brand}  •  AI Visibility Report</Text>
         </View>
         <Text style={{ fontSize: 7, color: C.muted }}>Scan #{doc.scan_no}  •  {doc.scan_date}</Text>
       </View>
       {children}
       <View fixed style={{ position: "absolute", bottom: 20, left: 40, right: 40, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={{ fontSize: 7, color: C.muted }}>Confidential. Prepared by SeenLense for {doc.brand}.</Text>
+        <Text style={{ fontSize: 7, color: C.muted }}>Confidential. Prepared by Seenlense for {doc.brand}.</Text>
         <View style={{ backgroundColor: C.head, borderRadius: 7, paddingVertical: 2.5, paddingHorizontal: 8 }}>
           <Text style={{ fontSize: 6.5, fontWeight: 700, color: C.white }} render={({ pageNumber }) => `Page ${pageNumber}`} />
         </View>
@@ -70,7 +70,7 @@ function Cover({ doc }: { doc: Doc }) {
       </Svg>
       <View style={{ position: "absolute", top: 38, left: 48, flexDirection: "row", alignItems: "center" }}>
         <Logo size={9} light />
-        <Text style={{ fontSize: 15, fontWeight: 700, color: C.white, marginLeft: 6 }}>SeenLense</Text>
+        <Text style={{ fontSize: 15, fontWeight: 700, color: C.white, marginLeft: 6 }}>Seenlense</Text>
         <Text style={{ fontSize: 8, color: C.lilac, marginLeft: 8 }}>AI Visibility Intelligence</Text>
       </View>
       <View style={{ position: "absolute", top: 240, left: 48, right: 48 }}>
@@ -102,7 +102,7 @@ function Cover({ doc }: { doc: Doc }) {
         ))}
       </View>
       <View style={{ position: "absolute", bottom: 40, left: 48, right: 48, flexDirection: "row", justifyContent: "space-between" }}>
-        <Text style={{ fontSize: 7, color: C.lilac }}>Confidential. Prepared by SeenLense for {doc.brand}.</Text>
+        <Text style={{ fontSize: 7, color: C.lilac }}>Confidential. Prepared by Seenlense for {doc.brand}.</Text>
         <Text style={{ fontSize: 7, color: C.lilac }}>Generated {doc.generated}</Text>
       </View>
     </Page>
@@ -935,7 +935,7 @@ function Method({ doc }: { doc: Doc }) {
 
 export function Report({ doc }: { doc: Doc }) {
   return (
-    <Document title={`${doc.brand} – AI Visibility Report`} author="SeenLense" creator="SeenLense" producer="SeenLense">
+    <Document title={`${doc.brand} – AI Visibility Report`} author="Seenlense" creator="Seenlense" producer="Seenlense">
       <Cover doc={doc} />
       <Contents doc={doc} />
       <Summary doc={doc} />
