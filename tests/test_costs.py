@@ -180,30 +180,6 @@ def test_scan_answer_is_attempted_once_per_executor_attempt(client, ai_on, monke
     assert posted and set(Counter(posted).values()) == {len(settings.retry_delays) + 1}
 
 
-def test_free_check_calls_are_recorded_as_free_check(ai_on, monkeypatch):
-    from app.freecheck.models import FreeCheck
-    from app.freecheck.service import run_free_check
-
-    def post(url, json=None, headers=None, timeout=None):
-        content = '{"brands": []}' if json.get("response_format") else "1. Halden is great."
-        return FakeResponse(200, ok_body(content=content))
-
-    monkeypatch.setattr(llm.httpx, "post", post)
-    monkeypatch.setattr(settings, "free_check_prompts", 1)
-    marker = uuid.uuid4().hex[:8]
-    with SessionLocal() as session:
-        check = FreeCheck(brand_name=f"Halden{marker}", website=f"halden{marker}.co", category="CRM software", country="US", client="t", status="queued")
-        session.add(check)
-        session.commit()
-        check_id = check.id
-        before = session.scalar(select(func.max(AICall.id))) or 0
-    run_free_check(check_id)
-    with SessionLocal() as session:
-        assert session.get(FreeCheck, check_id).status == "done"
-        rows = list(session.scalars(select(AICall).where(AICall.id > before)))
-    assert rows and {r.purpose for r in rows} == {"free_check"}
-
-
 class FakeHttpxResponse:
     def __init__(self, status_code, body=None):
         self.status_code, self._body = status_code, body or {}

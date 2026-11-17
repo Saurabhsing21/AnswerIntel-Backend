@@ -30,14 +30,3 @@ def test_a_scan_without_ai_ends_failed_with_the_message(client, ai_down):
         scan = session.scalar(select(Scan).where(Scan.id == scan_id))
         assert scan.status == "failed" and scan.error_message == MESSAGE
         assert scan.completed_runs == 0
-
-
-def test_the_free_check_without_ai_fails_instead_of_inventing_answers(ai_down):
-    from app.freecheck import service
-
-    try:
-        service._check("Halden", "halden.co", "CRM software", "US")
-    except Exception as exc:
-        assert getattr(exc, "code", "") == "AI_UNAVAILABLE"
-    else:
-        raise AssertionError("expected AI_UNAVAILABLE")

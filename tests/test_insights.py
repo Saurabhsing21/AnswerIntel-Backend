@@ -1,4 +1,4 @@
-"""Trust and action features: why AI picked a brand, noise-aware numbers, exports, drop alerts, drafts, free check."""
+"""Trust and action features: why AI picked a brand, noise-aware numbers, exports, drop alerts, drafts."""
 
 import csv
 import io
@@ -95,34 +95,6 @@ def test_opportunity_draft(client):
     draft = client.post(f"{API}/projects/{project_id}/opportunities/{opp_id}/draft", headers=headers)
     assert draft.status_code == 503 and draft.json()["error"]["code"] == "AI_UNAVAILABLE"  # no key: never a canned outline
     assert client.post(f"{API}/projects/{project_id}/opportunities/999999/draft", headers=headers).status_code == 404
-
-
-def test_free_check_is_off_by_default(client, monkeypatch):
-    monkeypatch.setattr(settings, "free_check_enabled", False)
-    body = {"brand_name": "Halden", "website": "halden.co", "category": "CRM software"}
-    assert client.post(f"{API}/free-check", json=body).status_code == 404
-
-
-def test_free_check_runs_reuses_and_is_capped(client, monkeypatch):
-    monkeypatch.setattr(settings, "free_check_enabled", True)
-    monkeypatch.setattr(settings, "free_checks_per_client", 10_000)  # every test run comes from the same address
-    site = f"brand-{uuid.uuid4().hex[:8]}.io"
-    body = {"brand_name": "Halden", "website": f"https://www.{site}/pricing", "category": "CRM software"}
-    started = client.post(f"{API}/free-check", json=body)
-    assert started.status_code == 200 and started.json()["website"] == site
-    check = client.get(f"{API}/free-check/{started.json()['id']}").json()
-    assert check["status"] == "done"
-    result = check["result"]
-    assert len(result["prompts"]) == settings.free_check_prompts
-    assert all("halden" not in p["text"].lower() for p in result["prompts"])  # unbranded questions only
-    assert result["summary"]["answers"] == settings.free_check_prompts * 2
-
-    assert client.post(f"{API}/free-check", json=body).json()["id"] == started.json()["id"]  # same site today: reused
-    assert client.post(f"{API}/free-check", json={**body, "website": "not a site"}).status_code == 422
-
-    monkeypatch.setattr(settings, "free_checks_per_day", 0)
-    capped = client.post(f"{API}/free-check", json={**body, "website": f"other-{site}"})
-    assert capped.status_code == 429 and capped.json()["error"]["code"] == "FREE_CHECK_LIMIT"
 
 
 def test_experiment_comparison_flags_noise(client):

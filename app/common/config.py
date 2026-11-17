@@ -30,26 +30,16 @@ class Settings(BaseSettings):
     dataforseo_login: str = ""
     dataforseo_password: str = ""
 
-    # Spend guardrails. Daily budget: all AI spend per UTC day except the free check's (0 = no limit). It grows with
+    # Spend guardrails. Daily budget: all AI spend per UTC day (0 = no limit). It grows with
     # paying users: this flat amount plus daily_budget_share_of_paid_cap x the sum of every paying workspace's cap.
     # Workspace cap: this share of what the workspace pays a month (a yearly price over 12): 62% on monthly and yearly
     # plans, so AI plus Paddle's fee (at most 7.5%) stays under 70% and we keep at least 30% (the cost rule, see
-    # app/billing/plans.py); plans priced at 0 use the flat dollar cap. The free check has its own daily
-    # budget, so anonymous traffic can never pause paid scans.
+    # app/billing/plans.py); plans priced at 0 use the flat dollar cap.
     daily_ai_budget_usd: float = 10.0
     daily_budget_share_of_paid_cap: float = 0.1
     workspace_cost_cap_ratio: float = 0.62
     workspace_cost_cap_ratio_yearly: float = 0.62
     free_workspace_cost_cap_usd: float = 1.0
-    free_check_daily_budget_usd: float = 5.0  # 0 = no limit
-
-    # Free website check: a few unbranded prompts on two engines (about $0.09 each). The daily cap bounds cost.
-    # Off until launch: while off the public endpoint answers 404, so nobody can run paid AI calls through it.
-    free_check_enabled: bool = False
-    free_checks_per_day: int = 100
-    free_checks_per_client: int = 3
-    free_check_prompts: int = 5
-    free_check_engines: str = "chatgpt_search,perplexity"
     prompt_model: str = "openai/gpt-5.4-mini"  # one call per project, so quality wins here
     analysis_model: str = "openai/gpt-5.4-nano"  # runs on every answer
     competitor_model: str = "openai/gpt-5.4-nano"  # one web-search call per new project to suggest 8 competitors

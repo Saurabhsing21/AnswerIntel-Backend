@@ -152,25 +152,6 @@ def test_onboarding_without_a_workspace_is_only_held_by_the_global_budget(client
     assert res.status_code == 429 and "AI_BUDGET_REACHED" in res.text
 
 
-def test_free_check_is_blocked_by_its_own_daily_budget(client, monkeypatch):
-    monkeypatch.setattr(settings, "free_check_enabled", True)
-    spend(None, "0.5", purpose="free_check")
-    with SessionLocal() as session:  # exactly today's free check spend: reached
-        monkeypatch.setattr(settings, "free_check_daily_budget_usd", float(costs.spend_today(session, free_check=True)))
-    body = {"brand_name": "Halden", "website": f"nobudget-{uuid.uuid4().hex[:8]}.example.com", "category": "CRM software"}
-    res = client.post(f"{API}/free-check", json=body)
-    assert res.status_code == 429 and "AI_BUDGET_REACHED" in res.text
-
-
-def test_free_check_spend_cannot_block_a_paid_scan(client, monkeypatch):
-    headers, project_id = project_with_prompts(client, "freespend")
-    monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0)
-    with SessionLocal() as session:  # one dollar of room left for everything but the free check
-        monkeypatch.setattr(settings, "daily_ai_budget_usd", float(costs.spend_today(session)) + 1)
-    spend(None, "5", purpose="free_check")  # far more than that dollar, all of it on the free check
-    assert client.post(f"{API}/projects/{project_id}/scans", headers=headers).status_code == 200
-
-
 def test_global_budget_grows_with_paid_subscriptions(monkeypatch):
     monkeypatch.setattr(settings, "daily_ai_budget_usd", 10.0)
     monkeypatch.setattr(settings, "daily_budget_share_of_paid_cap", 0.1)
