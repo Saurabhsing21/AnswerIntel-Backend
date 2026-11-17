@@ -28,7 +28,6 @@ def rate_limits_off(monkeypatch):
 def daily_budget_off(monkeypatch):
     """The test database keeps every ai_calls row ever written; the daily budgets have their own tests in test_spend_guardrails.py."""
     monkeypatch.setattr(settings, "daily_ai_budget_usd", 0)
-    monkeypatch.setattr(settings, "free_check_daily_budget_usd", 0)
 
 
 @pytest.fixture(autouse=True)
@@ -52,8 +51,7 @@ def simulated_ai(monkeypatch):
         def generate(self, data):
             return (InstructedTemplateGenerator() if data.instructions else TemplatePromptGenerator()).generate(data)
 
-    for target in ("app.scans.execution.get_provider", "app.freecheck.service.get_provider"):
-        monkeypatch.setattr(target, SimulatedAIProvider)
+    monkeypatch.setattr("app.scans.execution.get_provider", SimulatedAIProvider)
     monkeypatch.setattr("app.prompts.service.LLMPromptGenerator", TemplatePrompts)
 
 
@@ -63,8 +61,7 @@ def ai_down(monkeypatch):
     from app.prompts.generator import LLMPromptGenerator
 
     monkeypatch.setattr("app.prompts.service.LLMPromptGenerator", LLMPromptGenerator)
-    for target in ("app.scans.execution.get_provider", "app.freecheck.service.get_provider"):
-        monkeypatch.setattr(target, real_get_provider)
+    monkeypatch.setattr("app.scans.execution.get_provider", real_get_provider)
 
 
 @pytest.fixture(autouse=True)

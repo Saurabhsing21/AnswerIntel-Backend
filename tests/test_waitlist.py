@@ -64,7 +64,7 @@ def test_waitlist_only_mode_closes_everything_else(client, monkeypatch):
     monkeypatch.setattr("app.waitlist.email.send_report_email", lambda *args: None)
     assert client.post(f"{API}/waitlist", json={"email": fresh_email()}).status_code == 200
     for method, path in [("post", "/auth/register"), ("post", "/auth/login"), ("get", "/projects"),
-                         ("post", "/free-check"), ("post", "/billing/webhook"), ("get", "/workspaces")]:
+                         ("post", "/billing/webhook"), ("get", "/workspaces")]:
         response = client.post(f"{API}{path}", json={}) if method == "post" else client.get(f"{API}{path}")
         assert response.status_code == 404, path
     assert client.get("/health").status_code == 200

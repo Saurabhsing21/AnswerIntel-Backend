@@ -93,7 +93,7 @@ Everything above lives under `/api/v1/projects/{project_id}/...`.
 
 ## Billing (Paddle)
 
-There is no free plan (only the one-off free check on the website). A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Paddle
+There is no free plan (only the one free scan a new account gets). A new workspace can do nothing until it pays for Starter ($20), Growth ($50) or Pro ($100) a month through Paddle
 (the website's pricing buttons open Paddle's checkout, after sign-up for new visitors; an unpaid account sees a
 "Complete your subscription" step). Workspaces that existed before billing got a one-time 14-day trial that
 runs out on its own. Each plan has a prompt pool shared by its projects and a monthly AI-answer allowance (prompt × engine) that
@@ -130,8 +130,6 @@ ended" emails daily (`billing.trial_notices`), only for the legacy trials. Both 
   (from app.dataforseo.com/api-access, about $0.004 per answer). Empty = the engine is off.
 - Each verdict keeps the sentence from the answer behind it; rates carry a 95% margin and changes are flagged when
   they are within run-to-run noise (dashboard and experiments).
-- `POST /api/v1/free-check` is a public, one-off check (5 unbranded prompts on ChatGPT and Perplexity, about $0.09).
-  The same site is answered from cache for 24 hours; `FREE_CHECKS_PER_DAY` caps total cost.
 
 ## Known limits
 

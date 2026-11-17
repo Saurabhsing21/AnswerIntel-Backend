@@ -104,7 +104,6 @@ def finalize_scan_cost(session, scan) -> None:
 _alerted_on: date | None = None  # the day the "budget reached" error was logged
 _warned_on: date | None = None  # the day the "70% spent" error was logged
 WARN_AT = Decimal("0.7")
-FREE_CHECK = "free_check"
 
 
 def _sum_since(session, since: datetime, workspace_id: UUID | None = None) -> Decimal:
@@ -114,11 +113,9 @@ def _sum_since(session, since: datetime, workspace_id: UUID | None = None) -> De
     return Decimal(session.scalar(query))
 
 
-def spend_today(session, free_check: bool = False) -> Decimal:
-    """Today's (UTC) spend on the free check alone, or on everything else: each has its own daily budget."""
-    midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    purpose = AICall.purpose == FREE_CHECK if free_check else AICall.purpose != FREE_CHECK
-    return Decimal(session.scalar(select(func.coalesce(func.sum(AICall.cost_usd), 0)).where(AICall.created_at >= midnight, purpose)))
+def spend_today(session) -> Decimal:
+    """Today's (UTC) AI spend."""
+    return _sum_since(session, datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0))
 
 
 def workspace_spend_this_month(session, workspace_id: UUID) -> Decimal:
@@ -176,8 +173,7 @@ def _lock_budget(session, workspace_id: UUID | None) -> None:
 
 
 def check_global_budget(session) -> None:
-    """Refuse once the global daily AI budget is spent; warn once a day at 70%. Free check spend is not counted here
-    (it has check_free_check_budget), so anonymous traffic cannot pause paying users' scans."""
+    """Refuse once the global daily AI budget is spent; warn once a day at 70%."""
     global _alerted_on, _warned_on
     if settings.daily_ai_budget_usd <= 0:
         return
@@ -191,13 +187,6 @@ def check_global_budget(session) -> None:
     if spent >= budget * WARN_AT and _warned_on != today:
         _warned_on = today
         log.error("AI spend passed 70%% of today's budget: spent $%s of $%s.", spent, budget)
-
-
-def check_free_check_budget(session) -> None:
-    """The anonymous free check's own daily budget, counted over free check spend only."""
-    budget = Decimal(str(settings.free_check_daily_budget_usd))
-    if budget > 0 and spend_today(session, free_check=True) >= budget:
-        raise AppError(429, "AI_BUDGET_REACHED", "Free checks are paused for today. Try again tomorrow, or pick a plan for a full report.")
 
 
 def check_budget(session, workspace_id: UUID, lock: bool = False) -> None:
