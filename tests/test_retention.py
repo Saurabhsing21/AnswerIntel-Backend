@@ -12,7 +12,7 @@ from app.metrics.models import MetricSnapshot
 from app.providers.response_model import AIResponseRecord
 from app.scans.retention import purge_expired
 from app.users.models import User
-from tests.conftest import API, make_project, signup
+from tests.conftest import API, make_project, signup, register
 
 
 def count(session, model, *where) -> int:
@@ -63,8 +63,8 @@ def test_purge_works_in_small_batches(client):
 
 def test_dead_refresh_tokens_are_cleaned_up_active_ones_kept(client):
     email = f"tok-{uuid.uuid4().hex}@example.com"
-    client.post(f"{API}/auth/register", json={"email": email, "password": "password123"})
-    for _ in range(3):  # three logins -> three tokens
+    register(client, email)
+    for _ in range(2):  # sign-up and two logins -> three tokens
         client.post(f"{API}/auth/login", json={"email": email, "password": "password123"})
     now = datetime.now(timezone.utc)
     with SessionLocal() as session:

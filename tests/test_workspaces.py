@@ -2,14 +2,14 @@
 
 import uuid
 
-from tests.conftest import API, make_project, signup
+from tests.conftest import API, make_project, signup, register
 
 PROJECT = {"brand_name": "Halden", "website": "https://halden.co", "description": "CRM", "category": "CRM software", "country": "US"}
 
 
 def account(client, prefix):
     email = f"{prefix}-{uuid.uuid4().hex}@example.com"
-    client.post(f"{API}/auth/register", json={"email": email, "password": "password123"})
+    register(client, email)
     token = client.post(f"{API}/auth/login", json={"email": email, "password": "password123"}).json()["access_token"]
     return email, {"Authorization": f"Bearer {token}"}
 

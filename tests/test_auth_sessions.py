@@ -8,12 +8,12 @@ from sqlalchemy import select, update
 from app.auth.models import RefreshToken
 from app.common.database import SessionLocal
 from app.users.models import User
-from tests.conftest import API
+from tests.conftest import API, register
 
 
 def register_and_login(client) -> tuple[str, dict]:
     email = f"sess-{uuid.uuid4().hex}@example.com"
-    client.post(f"{API}/auth/register", json={"email": email, "password": "password123"})
+    register(client, email)
     login = client.post(f"{API}/auth/login", json={"email": email, "password": "password123"})
     assert login.status_code == 200
     return email, login.json()

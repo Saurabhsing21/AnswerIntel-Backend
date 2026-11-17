@@ -5,7 +5,9 @@ link names the address it proves, so it also confirms a change of email.
 """
 
 import hashlib
+import hmac
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -20,6 +22,7 @@ log = logging.getLogger(__name__)
 
 RESET_MINUTES = 60
 VERIFY_DAYS = 3
+SIGNUP_MINUTES = 15
 
 
 def _fingerprint(password_hash: str) -> str:
@@ -62,6 +65,26 @@ def read_verify_token(token: str) -> tuple[int, str]:
     return int(payload["sub"]), payload["email"]
 
 
+def _code_digest(email: str, code: str) -> str:
+    return hmac.new(settings.jwt_secret_key.encode(), f"{email.lower()}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def signup_token(email: str, password_hash: str) -> tuple[str, str]:
+    """A 6-digit code to email, and a token holding the pending signup. The account is made only once the code is
+    entered, so nobody can open an account on an address they can't read."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    token = _sign({"purpose": "signup", "email": email, "pw": password_hash, "code": _code_digest(email, code)},
+                  timedelta(minutes=SIGNUP_MINUTES))
+    return token, code
+
+
+def read_signup_token(token: str, code: str) -> tuple[str, str]:
+    payload = _read(token, "signup")
+    if not hmac.compare_digest(payload["code"], _code_digest(payload["email"], code.strip())):
+        raise ValueError("wrong code")
+    return payload["email"], payload["pw"]
+
+
 def link(path: str, token: str) -> str:
     return f"{settings.app_base_url.rstrip('/')}{path}?token={token}"
 
@@ -94,4 +117,14 @@ def send_verification(user: User, email: str | None = None) -> None:
         "Confirm your email",
         "Confirm this is your new Seenlense login email." if changing else "Confirm your email so we can send your reports and alerts.",
         "Confirm email", url, f"The link expires in {VERIFY_DAYS} days. If you didn't sign up for Seenlense, ignore this email.",
+    ))
+
+
+def send_signup_code(email: str, code: str) -> None:
+    send(email, f"{code} is your SeenLense code", email_html(
+        heading="Confirm your email",
+        paragraphs=["Enter this code to finish creating your SeenLense account."],
+        stats=[(code, "Sign-up code")],
+        footer=f"The code expires in {SIGNUP_MINUTES} minutes. If you didn't sign up for SeenLense, ignore this email.",
+        preheader=f"Your sign-up code is {code}",
     ))

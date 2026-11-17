@@ -41,29 +41,35 @@ def _create_account(session, email: str, password_hash: str, verified: bool = Fa
     return user
 
 
-@router.post("/register")
+@router.post("/register", dependencies=[Depends(limit_login)])
 def register(request: RegisterRequest, background: BackgroundTasks):
+    """Emails a code; the account is created only by /register/verify, once the code proves the inbox is theirs."""
     with SessionLocal() as session:
-        existing_user = session.scalar(
-            select(User).where(User.email == request.email)
-        )
+        if session.scalar(select(User.id).where(func.lower(User.email) == request.email.lower())):
+            raise HTTPException(status_code=409, detail="Email already registered")
+    token, code = links.signup_token(request.email, hash_password(request.password))
+    background.add_task(links.send_signup_code, request.email, code)
+    return {"signup_token": token, "email": request.email}
 
-        if existing_user:
-            raise HTTPException(
-                status_code=409,
-                detail="Email already registered",
-            )
 
-        user = _create_account(session, request.email, hash_password(request.password))
+class VerifySignup(BaseModel):
+    signup_token: str
+    code: str = Field(max_length=10)
+
+
+@router.post("/register/verify", dependencies=[Depends(limit_login)])
+def verify_signup(payload: VerifySignup):
+    try:
+        email, password_hash = links.read_signup_token(payload.signup_token, payload.code)
+    except ValueError:
+        raise AppError(400, "CODE_INVALID", "That code is wrong or has expired. Check the email or ask for a new code.")
+    with SessionLocal() as session:
+        if session.scalar(select(User.id).where(func.lower(User.email) == email.lower())):
+            raise HTTPException(status_code=409, detail="Email already registered")
+        user = _create_account(session, email, password_hash, verified=True)
+        tokens = issue_tokens(session, user)
         session.commit()
-        session.refresh(user)
-        background.add_task(links.send_verification, user)
-
-        return {
-            "id": user.id,
-            "email": user.email,
-        }
-
+        return tokens
 
 
 @router.post("/login", dependencies=[Depends(limit_login)])

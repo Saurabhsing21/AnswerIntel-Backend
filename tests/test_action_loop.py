@@ -291,7 +291,7 @@ def test_free_follow_ups_go_out_once_each_in_order(client, outbox, trial_signups
     headers = signup(client, "nudge")
     email = client.get(f"{API}/auth/me", headers=headers).json()["email"]
     now = datetime.now(timezone.utc)
-    subjects = lambda: [m["subject"] for m in outbox if m["to"] == email and "Confirm" not in m["subject"]]  # noqa: E731
+    subjects = lambda: [m["subject"] for m in outbox if m["to"] == email and "SeenLense code" not in m["subject"]]  # noqa: E731
     send_free_nudges(now)
     assert subjects() == []  # too early
     send_free_nudges(now + timedelta(days=1, minutes=1))

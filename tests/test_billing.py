@@ -26,7 +26,7 @@ from app.providers.response_model import AIResponseRecord
 from app.scans.models import Scan
 from app.scans.retention import purge_expired
 from app.workspaces.models import Workspace
-from tests.conftest import API, make_project, signup
+from tests.conftest import API, make_project, signup, register
 
 SECRET = "pdl_ntfset_test_secret"
 IS_PADDLE_IP = paddle_client.is_paddle_ip  # the real check, before fake_paddle swaps it out
@@ -145,7 +145,7 @@ def set_subscription(workspace_id, **values):
 
 def add_member(client, owner, workspace_id):
     email = f"seat-{uuid.uuid4().hex}@example.com"
-    client.post(f"{API}/auth/register", json={"email": email, "password": "password123"})
+    register(client, email)
     return client.post(f"{API}/workspaces/{workspace_id}/members", json={"email": email}, headers=owner)
 
 
@@ -180,7 +180,7 @@ def test_billing_endpoints_owner_only(client, fake_paddle):
     owner = signup(client, "billowner")
     workspace_id = workspace_of(client, owner)
     member_email = f"billmember-{uuid.uuid4().hex}@example.com"
-    client.post(f"{API}/auth/register", json={"email": member_email, "password": "password123"})
+    register(client, member_email)
     login = client.post(f"{API}/auth/login", json={"email": member_email, "password": "password123"})
     member = {"Authorization": f"Bearer {login.json()['access_token']}"}
     client.post(f"{API}/workspaces/{workspace_id}/members", json={"email": member_email, "role": "admin"}, headers=owner)

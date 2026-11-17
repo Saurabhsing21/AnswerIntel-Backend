@@ -9,11 +9,13 @@ assert "neon.tech" not in os.environ["DATABASE_URL"], "TEST_DATABASE_URL must no
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth import links
 from app.common.config import settings
 from app.main import app
 from app.providers.registry import get_provider as real_get_provider
 
 API = "/api/v1"
+SIGNUP_CODES: dict[str, str] = {}  # email -> the last sign-up code emailed to it
 
 
 @pytest.fixture(autouse=True)
@@ -82,6 +84,14 @@ def no_network_site_audit(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def signup_codes(monkeypatch):
+    """Sign-up codes, read by `register` the way a person reads them from the email."""
+    real = links.send_signup_code
+    monkeypatch.setattr(links, "send_signup_code", lambda email, code: (SIGNUP_CODES.__setitem__(email, code), real(email, code)))
+    return SIGNUP_CODES
+
+
+@pytest.fixture(autouse=True)
 def outbox(monkeypatch):
     """Every email (account, billing, alerts) lands here instead of going out through Resend."""
     sent: list[dict] = []
@@ -140,9 +150,17 @@ def client() -> TestClient:
 
 def signup(client: TestClient, prefix: str = "user") -> dict[str, str]:
     email = f"{prefix}-{uuid.uuid4().hex}@example.com"
-    client.post(f"{API}/auth/register", json={"email": email, "password": "password123"})
-    token = client.post(f"{API}/auth/login", json={"email": email, "password": "password123"}).json()["access_token"]
+    token = register(client, email).json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def register(client: TestClient, email: str, password: str = "password123"):
+    """Sign up the way a person does: ask for a code, read it from the email, enter it. Returns the verify response."""
+    started = client.post(f"{API}/auth/register", json={"email": email, "password": password})
+    if started.status_code != 200:
+        return started
+    code = SIGNUP_CODES[email]
+    return client.post(f"{API}/auth/register/verify", json={"signup_token": started.json()["signup_token"], "code": code})
 
 
 def make_project(client: TestClient, headers: dict, competitors=(("Kiteline", "https://kiteline.io"), ("Vantor", "https://vantor.app"))) -> str:
