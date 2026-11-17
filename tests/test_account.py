@@ -4,6 +4,7 @@ import re
 import uuid
 
 from tests.conftest import API, signup
+from tests.conftest import register as sign_up
 
 
 def token_in(mail: dict) -> str:
@@ -12,15 +13,39 @@ def token_in(mail: dict) -> str:
 
 def register(client, prefix="acct"):
     email = f"{prefix}-{uuid.uuid4().hex}@example.com"
-    client.post(f"{API}/auth/register", json={"email": email, "password": "password123"})
+    sign_up(client, email)
     tokens = client.post(f"{API}/auth/login", json={"email": email, "password": "password123"}).json()
     return email, {"Authorization": f"Bearer {tokens['access_token']}"}, tokens["refresh_token"]
 
 
-def test_signup_sends_a_verification_link_that_verifies(client, outbox):
+def test_no_account_until_the_emailed_code_is_entered(client, outbox, signup_codes):
+    email = f"code-{uuid.uuid4().hex}@example.com"
+    started = client.post(f"{API}/auth/register", json={"email": email, "password": "password123"})
+    assert started.status_code == 200
+    token = started.json()["signup_token"]
+    assert any(m["to"] == email and signup_codes[email] in m["html"] for m in outbox)
+    assert client.post(f"{API}/auth/login", json={"email": email, "password": "password123"}).status_code == 401
+
+    wrong = "000000" if signup_codes[email] != "000000" else "111111"
+    bad = client.post(f"{API}/auth/register/verify", json={"signup_token": token, "code": wrong})
+    assert bad.status_code == 400 and bad.json()["error"]["code"] == "CODE_INVALID"
+    assert client.post(f"{API}/auth/register/verify", json={"signup_token": "nonsense", "code": signup_codes[email]}).status_code == 400
+
+    ok = client.post(f"{API}/auth/register/verify", json={"signup_token": token, "code": signup_codes[email]})
+    assert ok.status_code == 200
+    me = client.get(f"{API}/auth/me", headers={"Authorization": f"Bearer {ok.json()['access_token']}"}).json()
+    assert me["email"] == email and me["email_verified"] is True
+    assert client.post(f"{API}/auth/register/verify", json={"signup_token": token, "code": signup_codes[email]}).status_code == 409
+    assert client.post(f"{API}/auth/register", json={"email": email.upper(), "password": "password123"}).status_code == 409
+
+
+def test_verification_link_still_verifies_older_accounts(client, outbox):
+    from tests.test_free_trial import unverify
+
     email, headers, _ = register(client)
-    assert client.get(f"{API}/auth/me", headers=headers).json()["email_verified"] is False
-    mail = next(m for m in outbox if m["to"] == email)
+    unverify(email)
+    client.post(f"{API}/auth/send-verification", headers=headers)
+    mail = next(m for m in outbox if m["to"] == email and "Confirm" in m["subject"])
     assert client.post(f"{API}/auth/verify-email", json={"token": token_in(mail)}).status_code == 200
     assert client.get(f"{API}/auth/me", headers=headers).json()["email_verified"] is True
     assert client.post(f"{API}/auth/verify-email", json={"token": "nonsense"}).status_code == 400
@@ -79,7 +104,7 @@ def test_invite_by_email_then_accept_after_signup(client, outbox):
     stranger = signup(client, "stranger")
     assert client.post(f"{API}/workspaces/invites/accept", json={"token": token}, headers=stranger).status_code == 403
 
-    client.post(f"{API}/auth/register", json={"email": guest, "password": "password123"})
+    sign_up(client, guest)
     guest_headers = {"Authorization": "Bearer " + client.post(f"{API}/auth/login", json={"email": guest, "password": "password123"}).json()["access_token"]}
     joined = client.post(f"{API}/workspaces/invites/accept", json={"token": token}, headers=guest_headers)
     assert joined.status_code == 200 and joined.json()["role"] == "admin"

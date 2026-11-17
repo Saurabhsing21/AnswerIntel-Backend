@@ -1,3 +1,4 @@
+from tests.conftest import register as register_account
 import uuid
 
 from fastapi.testclient import TestClient
@@ -34,10 +35,7 @@ def test_phase4_scan_flow_with_simulated_provider():
     email = f"phase4-{uuid.uuid4().hex}@example.com"
     password = "password123"
 
-    register = client.post(
-        f"{API}/auth/register",
-        json={"email": email, "password": password},
-    )
+    register = register_account(client, email, password)
     assert register.status_code == 200, register.text
 
     login = client.post(

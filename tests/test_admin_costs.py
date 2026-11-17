@@ -60,7 +60,10 @@ def test_access_control(client, admin):
 
 
 def test_unverified_admin_email_is_refused(client, monkeypatch):
+    from tests.test_free_trial import unverify
+
     headers = signup(client, "squatter")
+    unverify(headers, client)
     monkeypatch.setattr(settings, "admin_emails", client.get(f"{API}/auth/me", headers=headers).json()["email"])
     assert client.get(f"{API}/admin/costs", headers=headers).status_code == 404
 

@@ -9,9 +9,25 @@ from app.opportunities.models import Opportunity
 from tests.conftest import API, make_project, signup
 
 
+def unverify(headers_or_email, client=None):
+    """Sign-up now proves the inbox; accounts made before that can still be unverified."""
+    from sqlalchemy import update
+
+    from app.users.models import User
+
+    email = headers_or_email if client is None else client.get(f"{API}/auth/me", headers=headers_or_email).json()["email"]
+    with SessionLocal() as session:
+        session.execute(update(User).where(User.email == email).values(email_verified_at=None))
+        session.commit()
+
+
 def verify(client, outbox, headers):
-    email = client.get(f"{API}/auth/me", headers=headers).json()["email"]
-    token = re.search(r"token=([A-Za-z0-9._\-]+)", next(m for m in outbox if m["to"] == email)["html"]).group(1)
+    me = client.get(f"{API}/auth/me", headers=headers).json()
+    if me["email_verified"]:
+        return
+    email = me["email"]
+    client.post(f"{API}/auth/send-verification", headers=headers)
+    token = re.search(r"token=([A-Za-z0-9._\-]+)", next(m for m in outbox if m["to"] == email and "Confirm" in m["subject"])["html"]).group(1)
     client.post(f"{API}/auth/verify-email", json={"token": token})
 
 
@@ -30,6 +46,7 @@ def test_new_accounts_start_on_the_free_trial(client, trial_signups):
 
 def test_one_scan_after_confirming_the_email_then_the_limit(client, outbox, trial_signups):
     headers = signup(client, "trial")
+    unverify(headers, client)
     project_id = make_project(client, headers, competitors=())
     client.post(f"{API}/projects/{project_id}/prompts/generate", headers=headers)
 

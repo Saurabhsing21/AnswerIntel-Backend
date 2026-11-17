@@ -1,3 +1,4 @@
+from tests.conftest import register
 import uuid
 
 from fastapi.testclient import TestClient
@@ -209,10 +210,7 @@ def test_phase5_complete_pipeline_persists_analysis():
 
 def _login(email: str) -> str:
     password = "password123"
-    client.post(
-        f"{API}/auth/register",
-        json={"email": email, "password": password},
-    )
+    register(client, email, password)
     login = client.post(
         f"{API}/auth/login",
         json={"email": email, "password": password},
