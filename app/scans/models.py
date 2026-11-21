@@ -7,8 +7,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.common.database import Base
 
-# queued -> running -> completed | partial | failed
-ACTIVE_STATUSES = ("queued", "running")
+# queued -> running -> completed | partial | failed. A stopped scan passes through "stopping" and ends partial or
+# failed with STOPPED_MESSAGE.
+ACTIVE_STATUSES = ("queued", "running", "stopping")
+STOPPED_MESSAGE = "Stopped before it finished."
 
 
 class Scan(Base):

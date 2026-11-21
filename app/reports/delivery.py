@@ -12,7 +12,7 @@ from app.reports.models import Report
 from app.reports.pdf_jobs import queue_report_pdf
 from app.reports.email_render import build_report_email
 from app.reports.service import create_report
-from app.scans.models import Scan
+from app.scans.models import STOPPED_MESSAGE, Scan
 from app.users.models import User
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ def deliver_scan_report(scan_id: int, report_type: str) -> None:
         scan = session.get(Scan, scan_id)
         if not scan or scan.kind != "full" or scan.status not in ("completed", "partial"):
             return
+        if scan.error_message == STOPPED_MESSAGE:
+            return  # the user stopped it; its answers stay in the app, but it is not worth a report email
         if session.scalar(select(Report.id).where(Report.scan_id == scan_id)):
             return  # redelivered job: the report already exists
         project = session.get(Project, scan.project_id)

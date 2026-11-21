@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 import csv
@@ -17,8 +18,11 @@ from app.common.errors import AppError
 from app.costs.service import check_budget
 from app.prompts.models import ScanPrompt
 from app.providers.response_model import AIResponseRecord
+from app.costs.service import finalize_scan_cost
+from app.opportunities.retest import finish_retest
+from app.scans.execution import settle_credits
 from app.scans.queue import enqueue_scan
-from app.scans.models import Scan
+from app.scans.models import STOPPED_MESSAGE, Scan
 from app.scans.service import ScanService
 from app.users.models import User
 
@@ -83,6 +87,29 @@ def list_scans(project_id: UUID, current_user: User = Depends(get_current_user))
         project = get_owned_project(session, project_id, current_user.id)
         scans = session.scalars(select(Scan).where(Scan.project_id == project.id).order_by(Scan.id.desc())).all()
         return [serialize(s) for s in scans]
+
+
+@router.post("/{scan_id}/stop")
+def stop_scan(project_id: UUID, scan_id: int, current_user: User = Depends(get_current_user)):
+    """A queued scan ends at once. A running one is marked "stopping": the runner lets the answers already in flight
+    finish, drops the rest, and keeps what it saved. Either way only saved answers use up credits."""
+    with SessionLocal() as session:
+        scan = get_owned_scan(session, project_id, scan_id, current_user.id)
+        if scan.status == "queued":
+            scan.status = "failed"
+            scan.error_message = STOPPED_MESSAGE
+            scan.completed_at = datetime.now(timezone.utc)
+            finalize_scan_cost(session, scan)
+            settle_credits(session, scan)
+            if scan.kind == "retest":
+                finish_retest(session, scan)
+        elif scan.status == "running":
+            scan.status = "stopping"
+        elif scan.status != "stopping":
+            raise AppError(409, "SCAN_NOT_RUNNING", "This scan has already finished.")
+        session.commit()
+        session.refresh(scan)
+        return serialize(scan)
 
 
 @router.get("/{scan_id}")
