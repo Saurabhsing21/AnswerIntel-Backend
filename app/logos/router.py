@@ -23,6 +23,9 @@ router = APIRouter(prefix="/logos", tags=["Logos"])
 DOMAIN = re.compile(r"^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 SOURCE = "https://www.google.com/s2/favicons"
 CACHE_SECONDS = 7 * 24 * 3600
+# A miss is kept only an hour: it may be a slow or failed fetch, not a site without an icon, and a week of letter
+# tiles for a brand that has a logo is worse than asking Google again.
+MISS_CACHE_SECONDS = 3600
 MAX_BYTES = 200_000
 MAX_CACHED = 5000
 
@@ -32,7 +35,7 @@ _cache: dict[str, tuple[float, bytes | None, str]] = {}
 def fetch_logo(domain: str) -> tuple[bytes | None, str]:
     """(image, content type), or (None, "") when the site has no icon. Cached either way."""
     hit = _cache.get(domain)
-    if hit and time.monotonic() - hit[0] < CACHE_SECONDS:
+    if hit and time.monotonic() - hit[0] < (CACHE_SECONDS if hit[1] else MISS_CACHE_SECONDS):
         return hit[1], hit[2]
     image, kind = None, ""
     try:
