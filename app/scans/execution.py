@@ -31,7 +31,7 @@ from app.prompts.models import ScanPrompt
 from app.providers.base import AIProvider, ProviderContext
 from app.providers.registry import ModelRegistry, get_provider
 from app.providers.response_model import AIResponseRecord
-from app.scans.models import Scan
+from app.scans.models import ACTIVE_STATUSES, STOPPED_MESSAGE, Scan
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ class ScanExecutionService:
                 log.exception("Scan %s crashed", scan_id)
                 with SessionLocal() as session:
                     scan = session.get(Scan, scan_id)
-                    if scan and scan.status in ("queued", "running"):
+                    if scan and scan.status in ACTIVE_STATUSES:
                         scan.status = "failed"
                         scan.error_message = exc.message if isinstance(exc, AppError) else f"Scan crashed: {exc.__class__.__name__}"
                         scan.completed_at = datetime.now(timezone.utc)
@@ -185,6 +185,7 @@ class ScanExecutionService:
                     pool.submit(contextvars.copy_context().run, work, text, engine): (pid, engine)
                     for pid, text, _, _, engine in jobs
                 }
+                stopped = False
                 for future in as_completed(futures):
                     prompt_id, engine = futures[future]
                     try:
@@ -193,6 +194,9 @@ class ScanExecutionService:
                         scan.failed_runs += 1
                         last_error = f"{engine.display_name}: {exc}"[:500]
                         session.commit()
+                        if scan.status != "running":  # committing reloads the row: the user asked to stop
+                            stopped = True
+                            break
                         continue
                     record = AIResponseRecord(
                         scan_id=scan.id,
@@ -210,6 +214,28 @@ class ScanExecutionService:
                     save_analysis(session, record.id, result)
                     scan.completed_runs += 1
                     session.commit()
+                    if scan.status != "running":
+                        stopped = True
+                        break
+                if stopped:  # answers not yet asked are dropped; the ones already running finish before the pool closes
+                    for pending in futures:
+                        pending.cancel()
+
+            if stopped:
+                # Keep what was saved, like a scan cut short by a restart: no site audit, no alerts, no report email.
+                scan.status = "partial" if scan.completed_runs else "failed"
+                scan.error_message = STOPPED_MESSAGE
+                scan.completed_at = datetime.now(timezone.utc)
+                try:
+                    finish_partial_results(session, scan)
+                except Exception:
+                    log.exception("Could not build results for stopped scan %s", scan.id)
+                finalize_scan_cost(session, scan)
+                settle_credits(session, scan)
+                if scan.kind == "retest":
+                    finish_retest(session, scan)
+                session.commit()
+                return
 
             if scan.completed_runs and scan.kind == "full":
                 data = compute_and_store(session, scan)
@@ -279,7 +305,7 @@ def recover_interrupted_scans() -> int:
     from app.reports.delivery import deliver_scan_report  # reports build on metrics, which import scans
 
     with SessionLocal() as session:
-        stale = session.scalars(select(Scan).where(Scan.status.in_(("queued", "running")))).all()
+        stale = session.scalars(select(Scan).where(Scan.status.in_(ACTIVE_STATUSES))).all()
         for scan in stale:
             scan.status = "failed" if not scan.completed_runs else "partial"
             scan.error_message = "Interrupted by a server restart."
