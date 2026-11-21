@@ -1,0 +1,17 @@
+name: Keep awake
+
+# Render's free plan stops the API after 15 idle minutes, and the next visitor then waits 30-60s for it to start.
+# /health, not /ready: /ready queries the database and would keep Neon's compute running (and billed) all month.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - run: curl --fail --silent --show-error --max-time 90 --retry 2 "${API_URL:-https://seenlens-api.onrender.com}/health"
+        env:
+          API_URL: ${{ vars.API_URL }}
